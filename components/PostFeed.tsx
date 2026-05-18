@@ -13,10 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import type { Post } from "@/types/Post";
+import type { PaginatedPosts, Post } from "@/types/Post";
 
 type PostFeedProps = {
-  fetchPosts: () => Promise<Post[]>;
+  fetchPosts: (page?: number) => Promise<PaginatedPosts>;
   title?: string;
   emptyMessage?: string;
   showAds?: boolean;
@@ -37,10 +37,7 @@ function buildFeedItems(posts: Post[], showAds: boolean): FeedItem[] {
     items.push({ type: "post", post });
 
     if ((index + 1) % 3 === 0 && index !== posts.length - 1) {
-      items.push({
-        type: "ad",
-        id: `ad-${index}`,
-      });
+      items.push({ type: "ad", id: `ad-${index}` });
     }
   });
 
@@ -54,19 +51,24 @@ export default function PostFeed({
   showAds = true,
 }: PostFeedProps) {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [nextPage, setNextPage] = useState<number | null>(1);
+  const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const loadPosts = useCallback(
+  const loadFirstPage = useCallback(
     async (refreshing = false) => {
       try {
         refreshing ? setIsRefreshing(true) : setIsLoading(true);
-
         setErrorMessage(null);
 
-        const nextPosts = await fetchPosts();
-        setPosts(nextPosts);
+        const result = await fetchPosts(1);
+
+        setPosts(result.posts);
+        setHasMore(result.hasMore);
+        setNextPage(result.nextPage);
       } catch {
         setErrorMessage("Unable to load stories. Pull down to try again.");
       } finally {
@@ -77,9 +79,36 @@ export default function PostFeed({
     [fetchPosts]
   );
 
+  const loadMore = useCallback(async () => {
+    if (!hasMore || !nextPage || isLoadingMore || isLoading || isRefreshing) {
+      return;
+    }
+
+    try {
+      setIsLoadingMore(true);
+
+      const result = await fetchPosts(nextPage);
+
+      setPosts((currentPosts) => [...currentPosts, ...result.posts]);
+      setHasMore(result.hasMore);
+      setNextPage(result.nextPage);
+    } catch {
+      setErrorMessage("Unable to load more stories.");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [
+    fetchPosts,
+    hasMore,
+    nextPage,
+    isLoadingMore,
+    isLoading,
+    isRefreshing,
+  ]);
+
   useEffect(() => {
-    loadPosts();
-  }, [loadPosts]);
+    loadFirstPage();
+  }, [loadFirstPage]);
 
   const feedItems = buildFeedItems(posts, showAds);
 
@@ -109,9 +138,11 @@ export default function PostFeed({
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={() => loadPosts(true)}
+            onRefresh={() => loadFirstPage(true)}
           />
         }
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.6}
         contentContainerStyle={[
           styles.listContent,
           feedItems.length === 0 && styles.emptyListContent,
@@ -133,6 +164,14 @@ export default function PostFeed({
               </View>
             ) : null}
           </>
+        }
+        ListFooterComponent={
+          isLoadingMore ? (
+            <View style={styles.footerLoader}>
+              <ActivityIndicator />
+              <Text style={styles.footerText}>Loading more stories...</Text>
+            </View>
+          ) : null
         }
         ListEmptyComponent={
           <View style={styles.centerState}>
@@ -299,6 +338,15 @@ const styles = StyleSheet.create({
     color: "#888",
     fontSize: 12,
     marginTop: 10,
+  },
+  footerLoader: {
+    alignItems: "center",
+    paddingVertical: 18,
+  },
+  footerText: {
+    color: "#666",
+    fontSize: 13,
+    marginTop: 8,
   },
   adBox: {
     alignItems: "center",

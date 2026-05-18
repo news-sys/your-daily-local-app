@@ -19,6 +19,7 @@ import {
   getSportsPosts,
   getTopStories,
 } from "@/services/api";
+
 import type { Post } from "@/types/Post";
 
 const logo = require("@/assets/images/ydl-logo.png");
@@ -27,7 +28,9 @@ export default function HomeScreen() {
   const [topStories, setTopStories] = useState<Post[]>([]);
   const [newsPosts, setNewsPosts] = useState<Post[]>([]);
   const [sportsPosts, setSportsPosts] = useState<Post[]>([]);
+  const [forestCountyPosts, setForestCountyPosts] = useState<Post[]>([]);
   const [breakingPosts, setBreakingPosts] = useState<Post[]>([]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -35,19 +38,24 @@ export default function HomeScreen() {
   const loadHome = useCallback(async (refreshing = false) => {
     try {
       refreshing ? setIsRefreshing(true) : setIsLoading(true);
+
       setErrorMessage(null);
 
       const [top, news, sports, breaking] = await Promise.all([
-        getTopStories(),
-        getNewsPosts(),
-        getSportsPosts(),
-        getBreakingPosts(),
+        getTopStories(1),
+        getNewsPosts(1),
+        getSportsPosts(1),
+        getBreakingPosts(1),
       ]);
 
-      setTopStories(top);
-      setNewsPosts(news);
-      setSportsPosts(sports);
-      setBreakingPosts(breaking);
+      setTopStories(top.posts);
+      setNewsPosts(news.posts);
+      setSportsPosts(sports.posts);
+
+      // Placeholder until real Forest County category exists
+      setForestCountyPosts(news.posts.slice(0, 3));
+
+      setBreakingPosts(breaking.posts);
     } catch {
       setErrorMessage("Unable to load home feed. Pull down to try again.");
     } finally {
@@ -61,12 +69,12 @@ export default function HomeScreen() {
   }, [loadHome]);
 
   const leadStory = topStories[0];
-  const secondaryStories = topStories.slice(1, 4);
 
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
+
         <View style={styles.centerState}>
           <ActivityIndicator size="large" />
           <Text style={styles.centerText}>Loading Your Daily Local...</Text>
@@ -91,7 +99,10 @@ export default function HomeScreen() {
       >
         <View style={styles.header}>
           <Image source={logo} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.tagline}>Local news. Sports. Community.</Text>
+
+          <Text style={styles.tagline}>
+            Local news. Sports. Community.
+          </Text>
         </View>
 
         {errorMessage ? (
@@ -106,6 +117,7 @@ export default function HomeScreen() {
             onPress={() => router.push("/breaking")}
           >
             <Text style={styles.breakingLabel}>Breaking</Text>
+
             <Text style={styles.breakingText} numberOfLines={1}>
               {breakingPosts[0].title}
             </Text>
@@ -113,42 +125,70 @@ export default function HomeScreen() {
         ) : null}
 
         {leadStory ? (
-          <Pressable
-            style={styles.leadCard}
-            onPress={() =>
-              router.push({
-                pathname: "/article",
-                params: { id: String(leadStory.id) },
-              })
-            }
-          >
-            {leadStory.image ? (
-              <Image source={{ uri: leadStory.image }} style={styles.leadImage} />
-            ) : null}
+          <>
+            <Text style={styles.mainSectionTitle}>Top Story</Text>
 
-            <View style={styles.leadBody}>
-              <Text style={styles.sectionLabel}>Top Story</Text>
-              <Text style={styles.leadTitle}>{leadStory.title}</Text>
-
-              {leadStory.excerpt ? (
-                <Text style={styles.excerpt}>{leadStory.excerpt}</Text>
+            <Pressable
+              style={styles.leadCard}
+              onPress={() =>
+                router.push({
+                  pathname: "/article",
+                  params: { id: String(leadStory.id) },
+                })
+              }
+            >
+              {leadStory.image ? (
+                <Image
+                  source={{ uri: leadStory.image }}
+                  style={styles.leadImage}
+                />
               ) : null}
-            </View>
-          </Pressable>
+
+              <View style={styles.leadBody}>
+                <Text style={styles.leadTitle}>
+                  {leadStory.title}
+                </Text>
+
+                {leadStory.excerpt ? (
+                  <Text style={styles.excerpt}>
+                    {leadStory.excerpt}
+                  </Text>
+                ) : null}
+              </View>
+            </Pressable>
+          </>
         ) : null}
 
         <AdBox />
 
-        <Section title="More Top Stories" posts={secondaryStories} />
-        <Section title="Latest News" posts={newsPosts.slice(0, 3)} />
+        <Section
+          title="Latest News"
+          posts={newsPosts.slice(0, 4)}
+        />
+
+        <Section
+          title="Sports"
+          posts={sportsPosts.slice(0, 4)}
+        />
+
         <AdBox />
-        <Section title="Sports" posts={sportsPosts.slice(0, 3)} />
+
+        <Section
+          title="Forest County News"
+          posts={forestCountyPosts}
+        />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function Section({ title, posts }: { title: string; posts: Post[] }) {
+function Section({
+  title,
+  posts,
+}: {
+  title: string;
+  posts: Post[];
+}) {
   if (posts.length === 0) return null;
 
   return (
@@ -167,17 +207,28 @@ function Section({ title, posts }: { title: string; posts: Post[] }) {
           }
         >
           {post.image ? (
-            <Image source={{ uri: post.image }} style={styles.thumbnail} />
+            <Image
+              source={{ uri: post.image }}
+              style={styles.thumbnail}
+            />
           ) : null}
 
           <View style={styles.storyText}>
             {post.category ? (
-              <Text style={styles.category}>{post.category}</Text>
+              <Text style={styles.category}>
+                {post.category}
+              </Text>
             ) : null}
 
-            <Text style={styles.storyTitle}>{post.title}</Text>
+            <Text style={styles.storyTitle}>
+              {post.title}
+            </Text>
 
-            {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+            {post.date ? (
+              <Text style={styles.date}>
+                {post.date}
+              </Text>
+            ) : null}
           </View>
         </Pressable>
       ))}
@@ -188,8 +239,13 @@ function Section({ title, posts }: { title: string; posts: Post[] }) {
 function AdBox() {
   return (
     <View style={styles.adBox}>
-      <Text style={styles.adLabel}>Advertisement</Text>
-      <Text style={styles.adText}>Your business could be here</Text>
+      <Text style={styles.adLabel}>
+        Advertisement
+      </Text>
+
+      <Text style={styles.adText}>
+        Your business could be here
+      </Text>
     </View>
   );
 }
@@ -273,10 +329,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
+  mainSectionTitle: {
+    color: "#111",
+    fontSize: 24,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
   leadCard: {
     backgroundColor: "#fff",
     borderRadius: 18,
-    marginBottom: 16,
+    marginBottom: 18,
     overflow: "hidden",
   },
   leadImage: {
@@ -285,14 +347,6 @@ const styles = StyleSheet.create({
   },
   leadBody: {
     padding: 16,
-  },
-  sectionLabel: {
-    color: "#b00020",
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 0.7,
-    marginBottom: 8,
-    textTransform: "uppercase",
   },
   leadTitle: {
     color: "#111",
@@ -307,7 +361,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   section: {
-    marginTop: 8,
+    marginBottom: 12,
   },
   sectionTitle: {
     color: "#111",
