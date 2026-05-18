@@ -1,8 +1,8 @@
 import type { Post } from "@/types/Post";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const CACHE_PREFIX = "ydl_posts_cache:";
-const DEFAULT_TTL_MS = 1000 * 60 * 15; // 15 minutes
+const CACHE_PREFIX = "ydl_posts_cache_v2:";
+const DEFAULT_TTL_MS = 1000 * 60 * 15;
 
 type CachedPosts = {
   savedAt: number;
@@ -15,10 +15,7 @@ export async function savePostCache(key: string, posts: Post[]) {
     posts,
   };
 
-  await AsyncStorage.setItem(
-    `${CACHE_PREFIX}${key}`,
-    JSON.stringify(payload)
-  );
+  await AsyncStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify(payload));
 }
 
 export async function getPostCache(

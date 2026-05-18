@@ -1,144 +1,375 @@
-import { useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
-import AdSlot from "../../components/AdSlot";
-import BannerAdSlot from "../../components/BannerAdSlot";
-import BrandHeader from "../../components/BrandHeader";
-import BreakingBanner from "../../components/BreakingBanner";
-import CompactStoryCard from "../../components/CompactStoryCard";
-import HeroStoryCard from "../../components/HeroStoryCard";
-import NewsletterBox from "../../components/NewsletterBox";
-import SectionHeader from "../../components/SectionHeader";
+import { router } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { useCallback, useEffect, useState } from "react";
 import {
-  getBreakingStories,
-  getNewsStories,
-  getSportsStories,
-} from "../../services/api";
-import type { Post } from "../../types/Post";
+  ActivityIndicator,
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import {
+  getBreakingPosts,
+  getNewsPosts,
+  getSportsPosts,
+  getTopStories,
+} from "@/services/api";
+import type { Post } from "@/types/Post";
+
+const logo = require("@/assets/images/ydl-logo.png");
 
 export default function HomeScreen() {
-  const [breakingStories, setBreakingStories] = useState<Post[]>([]);
-  const [newsStories, setNewsStories] = useState<Post[]>([]);
-  const [sportsStories, setSportsStories] = useState<Post[]>([]);
+  const [topStories, setTopStories] = useState<Post[]>([]);
+  const [newsPosts, setNewsPosts] = useState<Post[]>([]);
+  const [sportsPosts, setSportsPosts] = useState<Post[]>([]);
+  const [breakingPosts, setBreakingPosts] = useState<Post[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadHomeData() {
-      const breaking = await getBreakingStories();
-      const news = await getNewsStories();
-      const sports = await getSportsStories();
+  const loadHome = useCallback(async (refreshing = false) => {
+    try {
+      refreshing ? setIsRefreshing(true) : setIsLoading(true);
+      setErrorMessage(null);
 
-      setBreakingStories(breaking);
-      setNewsStories(news);
-      setSportsStories(sports);
+      const [top, news, sports, breaking] = await Promise.all([
+        getTopStories(),
+        getNewsPosts(),
+        getSportsPosts(),
+        getBreakingPosts(),
+      ]);
+
+      setTopStories(top);
+      setNewsPosts(news);
+      setSportsPosts(sports);
+      setBreakingPosts(breaking);
+    } catch {
+      setErrorMessage("Unable to load home feed. Pull down to try again.");
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
     }
-
-    loadHomeData();
   }, []);
 
+  useEffect(() => {
+    loadHome();
+  }, [loadHome]);
+
+  const leadStory = topStories[0];
+  const secondaryStories = topStories.slice(1, 4);
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="dark" />
+        <View style={styles.centerState}>
+          <ActivityIndicator size="large" />
+          <Text style={styles.centerText}>Loading Your Daily Local...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <BrandHeader />
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar style="dark" />
 
-      <BannerAdSlot label="Top Sponsor" height={90} />
-      <BannerAdSlot label="Featured Advertiser" height={90} />
-
-      <BreakingBanner story={breakingStories[0]} />
-
-      <SectionHeader title="News" actionText="More News" href="/news" />
-
-      {newsStories[0] ? (
-        <HeroStoryCard
-          id={newsStories[0].id}
-          title={newsStories[0].title}
-          image={newsStories[0].image}
-          category={newsStories[0].category}
-        />
-      ) : null}
-
-      {newsStories.slice(1, 6).map((post, index) => (
-        <View key={post.id}>
-          <CompactStoryCard
-            id={post.id}
-            title={post.title}
-            excerpt={post.excerpt}
-            image={post.image}
-            category={post.category}
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => loadHome(true)}
           />
-
-          {index === 1 ? (
-            <AdSlot label="Support Your Daily Local" />
-          ) : null}
+        }
+      >
+        <View style={styles.header}>
+          <Image source={logo} style={styles.logo} resizeMode="contain" />
+          <Text style={styles.tagline}>Local news. Sports. Community.</Text>
         </View>
-      ))}
 
-      <SectionHeader title="Sports" actionText="More Sports" href="/sports" />
+        {errorMessage ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
 
-      {sportsStories[0] ? (
-        <HeroStoryCard
-          id={sportsStories[0].id}
-          title={sportsStories[0].title}
-          image={sportsStories[0].image}
-          category={sportsStories[0].category}
-        />
-      ) : null}
+        {breakingPosts.length > 0 ? (
+          <Pressable
+            style={styles.breakingBar}
+            onPress={() => router.push("/breaking")}
+          >
+            <Text style={styles.breakingLabel}>Breaking</Text>
+            <Text style={styles.breakingText} numberOfLines={1}>
+              {breakingPosts[0].title}
+            </Text>
+          </Pressable>
+        ) : null}
 
-      {sportsStories.slice(1, 6).map((post, index) => (
-        <View key={post.id}>
-          <CompactStoryCard
-            id={post.id}
-            title={post.title}
-            excerpt={post.excerpt}
-            image={post.image}
-            category={post.category}
-          />
+        {leadStory ? (
+          <Pressable
+            style={styles.leadCard}
+            onPress={() =>
+              router.push({
+                pathname: "/article",
+                params: { id: String(leadStory.id) },
+              })
+            }
+          >
+            {leadStory.image ? (
+              <Image source={{ uri: leadStory.image }} style={styles.leadImage} />
+            ) : null}
 
-          {index === 1 ? (
-            <AdSlot label="Sports Sponsor" />
+            <View style={styles.leadBody}>
+              <Text style={styles.sectionLabel}>Top Story</Text>
+              <Text style={styles.leadTitle}>{leadStory.title}</Text>
+
+              {leadStory.excerpt ? (
+                <Text style={styles.excerpt}>{leadStory.excerpt}</Text>
+              ) : null}
+            </View>
+          </Pressable>
+        ) : null}
+
+        <AdBox />
+
+        <Section title="More Top Stories" posts={secondaryStories} />
+        <Section title="Latest News" posts={newsPosts.slice(0, 3)} />
+        <AdBox />
+        <Section title="Sports" posts={sportsPosts.slice(0, 3)} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function Section({ title, posts }: { title: string; posts: Post[] }) {
+  if (posts.length === 0) return null;
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+
+      {posts.map((post) => (
+        <Pressable
+          key={String(post.id)}
+          style={styles.storyRow}
+          onPress={() =>
+            router.push({
+              pathname: "/article",
+              params: { id: String(post.id) },
+            })
+          }
+        >
+          {post.image ? (
+            <Image source={{ uri: post.image }} style={styles.thumbnail} />
           ) : null}
-        </View>
+
+          <View style={styles.storyText}>
+            {post.category ? (
+              <Text style={styles.category}>{post.category}</Text>
+            ) : null}
+
+            <Text style={styles.storyTitle}>{post.title}</Text>
+
+            {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+          </View>
+        </Pressable>
       ))}
+    </View>
+  );
+}
 
-      <SectionHeader title="Subscribe To Our Newsletter" />
-
-      <NewsletterBox />
-
-      <SectionHeader title="Watch" />
-
-      <View style={styles.videoBox}>
-        <Text style={styles.videoTitle}>Your Daily Local Video</Text>
-
-        <Text style={styles.videoText}>
-          YouTube and livestream embeds will be added in a later build.
-        </Text>
-      </View>
-
-      <AdSlot label="Bottom Sponsor" />
-    </ScrollView>
+function AdBox() {
+  return (
+    <View style={styles.adBox}>
+      <Text style={styles.adLabel}>Advertisement</Text>
+      <Text style={styles.adText}>Your business could be here</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
+    backgroundColor: "#f6f6f6",
     flex: 1,
-    backgroundColor: "#ffffff",
+  },
+  container: {
+    backgroundColor: "#f6f6f6",
+    flex: 1,
   },
   content: {
-    padding: 12,
+    padding: 16,
     paddingBottom: 36,
   },
-  videoBox: {
-    backgroundColor: "#111111",
-    padding: 18,
-    marginBottom: 18,
+  centerState: {
+    alignItems: "center",
+    backgroundColor: "#f6f6f6",
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
   },
-  videoTitle: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "900",
-    marginBottom: 6,
+  centerText: {
+    color: "#666",
+    fontSize: 15,
+    marginTop: 10,
+    textAlign: "center",
   },
-  videoText: {
-    color: "#dddddd",
+  header: {
+    alignItems: "center",
+    marginBottom: 16,
+    paddingTop: 4,
+  },
+  logo: {
+    height: 72,
+    width: 260,
+  },
+  tagline: {
+    color: "#666",
+    fontSize: 13,
+    marginTop: 2,
+  },
+  errorBox: {
+    backgroundColor: "#fdecec",
+    borderColor: "#f4b4b4",
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 14,
+    padding: 12,
+  },
+  errorText: {
+    color: "#8a1f1f",
     fontSize: 14,
-    lineHeight: 20,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  breakingBar: {
+    alignItems: "center",
+    backgroundColor: "#b00020",
+    borderRadius: 14,
+    flexDirection: "row",
+    marginBottom: 16,
+    padding: 12,
+  },
+  breakingLabel: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    color: "#b00020",
+    fontSize: 12,
+    fontWeight: "900",
+    marginRight: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    textTransform: "uppercase",
+  },
+  breakingText: {
+    color: "#fff",
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  leadCard: {
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  leadImage: {
+    height: 220,
+    width: "100%",
+  },
+  leadBody: {
+    padding: 16,
+  },
+  sectionLabel: {
+    color: "#b00020",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.7,
+    marginBottom: 8,
+    textTransform: "uppercase",
+  },
+  leadTitle: {
+    color: "#111",
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 30,
+  },
+  excerpt: {
+    color: "#555",
+    fontSize: 15,
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  section: {
+    marginTop: 8,
+  },
+  sectionTitle: {
+    color: "#111",
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 12,
+  },
+  storyRow: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    flexDirection: "row",
+    marginBottom: 12,
+    overflow: "hidden",
+  },
+  thumbnail: {
+    height: 105,
+    width: 110,
+  },
+  storyText: {
+    flex: 1,
+    padding: 12,
+  },
+  category: {
+    color: "#b00020",
+    fontSize: 11,
+    fontWeight: "900",
+    marginBottom: 4,
+    textTransform: "uppercase",
+  },
+  storyTitle: {
+    color: "#111",
+    fontSize: 16,
+    fontWeight: "800",
+    lineHeight: 21,
+  },
+  date: {
+    color: "#888",
+    fontSize: 12,
+    marginTop: 8,
+  },
+  adBox: {
+    alignItems: "center",
+    backgroundColor: "#eeeeee",
+    borderColor: "#d0d0d0",
+    borderRadius: 14,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    marginBottom: 18,
+    marginTop: 2,
+    padding: 18,
+  },
+  adLabel: {
+    color: "#777",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+    marginBottom: 4,
+    textTransform: "uppercase",
+  },
+  adText: {
+    color: "#333",
+    fontSize: 15,
+    fontWeight: "800",
   },
 });

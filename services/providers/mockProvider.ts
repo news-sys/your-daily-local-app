@@ -1,59 +1,42 @@
-import { DEV_CONFIG } from "../../config/dev";
-import { mockPosts } from "../../data/mockPosts";
-import type { Post } from "../../types/Post";
+import { mockPosts } from "@/data/mockPosts";
+import type { Post } from "@/types/Post";
 
-async function simulateNetworkBehavior() {
-  if (DEV_CONFIG.simulateApiDelay) {
-    await new Promise((resolve) => {
-      setTimeout(resolve, DEV_CONFIG.apiDelayMs);
-    });
-  }
+function sortNewestFirst(posts: Post[]): Post[] {
+  return [...posts].sort((a, b) => {
+    const aTime = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+    const bTime = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
 
-  if (DEV_CONFIG.simulateApiError) {
-    throw new Error("Simulated API failure");
-  }
+    return bTime - aTime;
+  });
 }
 
-export async function getMockTopStories(): Promise<Post[]> {
-  await simulateNetworkBehavior();
-
-  return mockPosts as Post[];
+function filterByCategory(category: string): Post[] {
+  return sortNewestFirst(
+    mockPosts.filter(
+      (post) =>
+        post.category?.toLowerCase() === category.toLowerCase()
+    )
+  );
 }
 
-export async function getMockNewsStories(): Promise<Post[]> {
-  await simulateNetworkBehavior();
-
-  return mockPosts.filter((post) => post.category === "News") as Post[];
+export async function getTopStories(): Promise<Post[]> {
+  return sortNewestFirst(mockPosts).slice(0, 8);
 }
 
-export async function getMockSportsStories(): Promise<Post[]> {
-  await simulateNetworkBehavior();
-
-  return mockPosts.filter((post) => post.category === "Sports") as Post[];
+export async function getNewsPosts(): Promise<Post[]> {
+  return filterByCategory("News");
 }
 
-export async function getMockBreakingStories(): Promise<Post[]> {
-  await simulateNetworkBehavior();
-
-  const breakingWindowHours = 72;
-
-  return mockPosts.filter((post) => {
-    if (post.category !== "Breaking") return false;
-
-    const postDate = new Date(post.date);
-    const now = new Date();
-
-    const hoursOld =
-      (now.getTime() - postDate.getTime()) / (1000 * 60 * 60);
-
-    return hoursOld <= breakingWindowHours;
-  }) as Post[];
+export async function getSportsPosts(): Promise<Post[]> {
+  return filterByCategory("Sports");
 }
 
-export async function getMockStoryById(
-  id: number
+export async function getBreakingPosts(): Promise<Post[]> {
+  return filterByCategory("Breaking");
+}
+
+export async function getPostById(
+  id: string
 ): Promise<Post | undefined> {
-  await simulateNetworkBehavior();
-
-  return mockPosts.find((post) => post.id === id) as Post | undefined;
+  return mockPosts.find((post) => post.id === id);
 }
