@@ -13,24 +13,15 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-  getBreakingPosts,
-  getNewsPosts,
-  getSportsPosts,
-  getTopStories,
-} from "@/services/api";
-
+import { getBreakingPosts, getHomepageSections } from "@/services/api";
+import type { HomeSection } from "@/types/HomeSection";
 import type { Post } from "@/types/Post";
 
 const logo = require("@/assets/images/ydl-logo.png");
 
 export default function HomeScreen() {
-  const [topStories, setTopStories] = useState<Post[]>([]);
-  const [newsPosts, setNewsPosts] = useState<Post[]>([]);
-  const [sportsPosts, setSportsPosts] = useState<Post[]>([]);
-  const [forestCountyPosts, setForestCountyPosts] = useState<Post[]>([]);
+  const [sections, setSections] = useState<HomeSection[]>([]);
   const [breakingPosts, setBreakingPosts] = useState<Post[]>([]);
-
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -38,23 +29,14 @@ export default function HomeScreen() {
   const loadHome = useCallback(async (refreshing = false) => {
     try {
       refreshing ? setIsRefreshing(true) : setIsLoading(true);
-
       setErrorMessage(null);
 
-      const [top, news, sports, breaking] = await Promise.all([
-        getTopStories(1),
-        getNewsPosts(1),
-        getSportsPosts(1),
+      const [homeSections, breaking] = await Promise.all([
+        getHomepageSections(),
         getBreakingPosts(1),
       ]);
 
-      setTopStories(top.posts);
-      setNewsPosts(news.posts);
-      setSportsPosts(sports.posts);
-
-      // Placeholder until real Forest County category exists
-      setForestCountyPosts(news.posts.slice(0, 3));
-
+      setSections(homeSections);
       setBreakingPosts(breaking.posts);
     } catch {
       setErrorMessage("Unable to load home feed. Pull down to try again.");
@@ -67,8 +49,6 @@ export default function HomeScreen() {
   useEffect(() => {
     loadHome();
   }, [loadHome]);
-
-  const leadStory = topStories[0];
 
   if (isLoading) {
     return (
@@ -99,10 +79,7 @@ export default function HomeScreen() {
       >
         <View style={styles.header}>
           <Image source={logo} style={styles.logo} resizeMode="contain" />
-
-          <Text style={styles.tagline}>
-            Local news. Sports. Community.
-          </Text>
+          <Text style={styles.tagline}>Local news. Sports. Community.</Text>
         </View>
 
         {errorMessage ? (
@@ -117,85 +94,70 @@ export default function HomeScreen() {
             onPress={() => router.push("/breaking")}
           >
             <Text style={styles.breakingLabel}>Breaking</Text>
-
             <Text style={styles.breakingText} numberOfLines={1}>
               {breakingPosts[0].title}
             </Text>
           </Pressable>
         ) : null}
 
-        {leadStory ? (
-          <>
-            <Text style={styles.mainSectionTitle}>Top Story</Text>
+        {sections.map((section) => {
+          if (section.type === "ad") {
+            return <AdBox key={section.id} />;
+          }
 
-            <Pressable
-              style={styles.leadCard}
-              onPress={() =>
-                router.push({
-                  pathname: "/article",
-                  params: { id: String(leadStory.id) },
-                })
-              }
-            >
-              {leadStory.image ? (
-                <Image
-                  source={{ uri: leadStory.image }}
-                  style={styles.leadImage}
-                />
-              ) : null}
+          if (section.type === "lead") {
+            return <LeadSection key={section.id} section={section} />;
+          }
 
-              <View style={styles.leadBody}>
-                <Text style={styles.leadTitle}>
-                  {leadStory.title}
-                </Text>
-
-                {leadStory.excerpt ? (
-                  <Text style={styles.excerpt}>
-                    {leadStory.excerpt}
-                  </Text>
-                ) : null}
-              </View>
-            </Pressable>
-          </>
-        ) : null}
-
-        <AdBox />
-
-        <Section
-          title="Latest News"
-          posts={newsPosts.slice(0, 4)}
-        />
-
-        <Section
-          title="Sports"
-          posts={sportsPosts.slice(0, 4)}
-        />
-
-        <AdBox />
-
-        <Section
-          title="Forest County News"
-          posts={forestCountyPosts}
-        />
+          return <ListSection key={section.id} section={section} />;
+        })}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function Section({
-  title,
-  posts,
-}: {
-  title: string;
-  posts: Post[];
-}) {
-  if (posts.length === 0) return null;
+function LeadSection({ section }: { section: HomeSection }) {
+  const leadStory = section.posts[0];
+
+  if (!leadStory) return null;
+
+  return (
+    <>
+      <Text style={styles.mainSectionTitle}>{section.title}</Text>
+
+      <Pressable
+        style={styles.leadCard}
+        onPress={() =>
+          router.push({
+            pathname: "/article",
+            params: { id: String(leadStory.id) },
+          })
+        }
+      >
+        {leadStory.image ? (
+          <Image source={{ uri: leadStory.image }} style={styles.leadImage} />
+        ) : null}
+
+        <View style={styles.leadBody}>
+          <Text style={styles.leadTitle}>{leadStory.title}</Text>
+
+          {leadStory.excerpt ? (
+            <Text style={styles.excerpt}>{leadStory.excerpt}</Text>
+          ) : null}
+        </View>
+      </Pressable>
+    </>
+  );
+}
+
+function ListSection({ section }: { section: HomeSection }) {
+  if (section.posts.length === 0) return null;
 
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionTitle}>{section.title}</Text>
 
-      {posts.map((post) => (
+      {section.posts.map((post) => (
         <Pressable
           key={String(post.id)}
           style={styles.storyRow}
@@ -207,28 +169,17 @@ function Section({
           }
         >
           {post.image ? (
-            <Image
-              source={{ uri: post.image }}
-              style={styles.thumbnail}
-            />
+            <Image source={{ uri: post.image }} style={styles.thumbnail} />
           ) : null}
 
           <View style={styles.storyText}>
             {post.category ? (
-              <Text style={styles.category}>
-                {post.category}
-              </Text>
+              <Text style={styles.category}>{post.category}</Text>
             ) : null}
 
-            <Text style={styles.storyTitle}>
-              {post.title}
-            </Text>
+            <Text style={styles.storyTitle}>{post.title}</Text>
 
-            {post.date ? (
-              <Text style={styles.date}>
-                {post.date}
-              </Text>
-            ) : null}
+            {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
           </View>
         </Pressable>
       ))}
@@ -239,13 +190,8 @@ function Section({
 function AdBox() {
   return (
     <View style={styles.adBox}>
-      <Text style={styles.adLabel}>
-        Advertisement
-      </Text>
-
-      <Text style={styles.adText}>
-        Your business could be here
-      </Text>
+      <Text style={styles.adLabel}>Advertisement</Text>
+      <Text style={styles.adText}>Your business could be here</Text>
     </View>
   );
 }
