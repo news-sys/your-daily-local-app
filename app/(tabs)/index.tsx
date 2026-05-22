@@ -52,7 +52,7 @@ export default function HomeScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
         <StatusBar style="light" />
 
         <View style={styles.loadingContainer}>
@@ -79,8 +79,12 @@ export default function HomeScreen() {
       >
         <View style={styles.header}>
           <Image source={logo} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.tagline}>Local news. Sports. Community.</Text>
+          <Text style={styles.tagline}>
+            The news you need, when you need it
+          </Text>
         </View>
+
+        <AdBox label="Featured Sponsor" />
 
         {errorMessage ? (
           <View style={styles.errorBox}>
@@ -102,17 +106,21 @@ export default function HomeScreen() {
           </Pressable>
         ) : null}
 
-        {sections.map((section) => {
-          if (section.type === "ad") {
-            return <AdBox key={section.id} />;
-          }
+        {sections.map((section, index) => (
+          <View key={section.id}>
+            {section.type === "ad" ? (
+              <AdBox label="Sponsor Message" />
+            ) : section.type === "lead" ? (
+              <LeadSection section={section} />
+            ) : (
+              <ListSection section={section} />
+            )}
 
-          if (section.type === "lead") {
-            return <LeadSection key={section.id} section={section} />;
-          }
-
-          return <ListSection key={section.id} section={section} />;
-        })}
+            {index < sections.length - 1 ? (
+              <AdBox label="Local Advertising Partner" />
+            ) : null}
+          </View>
+        ))}
       </ScrollView>
     </SafeAreaView>
   );
@@ -202,11 +210,12 @@ function ListSection({ section }: { section: HomeSection }) {
   );
 }
 
-function AdBox() {
+function AdBox({ label = "Advertisement" }: { label?: string }) {
   return (
     <View style={styles.adBox}>
       <Text style={styles.adLabel}>Advertisement</Text>
-      <Text style={styles.adText}>Your business could be here</Text>
+      <Text style={styles.adText}>{label}</Text>
+      <Text style={styles.adSubtext}>Your business could be here</Text>
     </View>
   );
 }
@@ -399,7 +408,12 @@ const styles = StyleSheet.create({
   },
   adText: {
     color: "#333",
-    fontSize: 15,
-    fontWeight: "800",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  adSubtext: {
+    color: "#666",
+    fontSize: 13,
+    marginTop: 4,
   },
 });

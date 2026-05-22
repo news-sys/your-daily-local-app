@@ -40,6 +40,19 @@ function formatDisplayDate(date?: string): string {
   }
 }
 
+function InArticleAd({ label }: { label: string }) {
+  return (
+    <View style={styles.adContainer}>
+      <Text style={styles.adLabel}>Sponsored</Text>
+
+      <View style={styles.adCard}>
+        <Text style={styles.adHeadline}>{label}</Text>
+        <Text style={styles.adCopy}>Your Daily Local sponsor placement</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function ArticleScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = params.id;
@@ -99,10 +112,7 @@ export default function ArticleScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView
-        style={styles.safeArea}
-        edges={["top", "left", "right"]}
-      >
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
         <StatusBar style="light" />
 
         <View style={styles.loadingContainer}>
@@ -115,18 +125,13 @@ export default function ArticleScreen() {
 
   if (!post) {
     return (
-      <SafeAreaView
-        style={styles.safeArea}
-        edges={["top", "left", "right"]}
-      >
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
         <StatusBar style="light" />
 
         <View style={styles.loadingContainer}>
           <Text style={styles.notFoundTitle}>Story not found</Text>
 
-          <Text style={styles.centerText}>
-            This story could not be loaded.
-          </Text>
+          <Text style={styles.centerText}>This story could not be loaded.</Text>
 
           <Pressable
             style={styles.backButtonLarge}
@@ -140,10 +145,7 @@ export default function ArticleScreen() {
   }
 
   return (
-    <SafeAreaView
-      style={styles.safeArea}
-      edges={["top", "left", "right"]}
-    >
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <StatusBar style="light" />
 
       <Stack.Screen
@@ -156,10 +158,7 @@ export default function ArticleScreen() {
           headerTintColor: "#fff",
           headerRight: () => (
             <View style={styles.headerActions}>
-              <Pressable
-                onPress={shareArticle}
-                style={styles.headerIconButton}
-              >
+              <Pressable onPress={shareArticle} style={styles.headerIconButton}>
                 <Ionicons
                   name="share-social-outline"
                   size={22}
@@ -196,11 +195,11 @@ export default function ArticleScreen() {
               cachePolicy="memory-disk"
             />
 
-          {post.imageCaption ? (
-            <Text style={styles.imageCaption}>{post.imageCaption}</Text>
-          ) : null}
-        </View>
-      ) : null}
+            {post.imageCaption ? (
+              <Text style={styles.imageCaption}>{post.imageCaption}</Text>
+            ) : null}
+          </View>
+        ) : null}
 
         <View style={styles.articleCard}>
           <View style={styles.metaRow}>
@@ -209,9 +208,7 @@ export default function ArticleScreen() {
             ) : null}
 
             {post.date ? (
-              <Text style={styles.date}>
-                {formatDisplayDate(post.date)}
-              </Text>
+              <Text style={styles.date}>{formatDisplayDate(post.date)}</Text>
             ) : null}
           </View>
 
@@ -219,16 +216,37 @@ export default function ArticleScreen() {
 
           <View style={styles.divider} />
 
+          <InArticleAd label="Sponsor Message" />
+
           {bodyParagraphs.length > 0 ? (
-            bodyParagraphs.map((paragraph, index) => (
-              <Text key={`${index}-${paragraph.slice(0, 20)}`} style={styles.body}>
-                {paragraph}
-              </Text>
-            ))
+            <>
+              {bodyParagraphs.map((paragraph, index) => {
+                const isAfterSecondParagraph = index === 1;
+                const isAfterFifthParagraph = index === 4;
+                const isAfterLastParagraph =
+                  index === bodyParagraphs.length - 1;
+
+                return (
+                  <View key={`${index}-${paragraph.slice(0, 20)}`}>
+                    <Text style={styles.body}>{paragraph}</Text>
+
+                    {isAfterSecondParagraph ? (
+                      <InArticleAd label="Local Advertising Partner" />
+                    ) : null}
+
+                    {isAfterFifthParagraph ? (
+                      <InArticleAd label="Community Sponsor" />
+                    ) : null}
+
+                    {isAfterLastParagraph ? (
+                      <InArticleAd label="Your Daily Local Sponsor" />
+                    ) : null}
+                  </View>
+                );
+              })}
+            </>
           ) : (
-            <Text style={styles.body}>
-              No article text available.
-            </Text>
+            <Text style={styles.body}>No article text available.</Text>
           )}
 
           <View style={styles.actionRow}>
@@ -250,15 +268,8 @@ export default function ArticleScreen() {
               </Text>
             </Pressable>
 
-            <Pressable
-              style={styles.shareButton}
-              onPress={shareArticle}
-            >
-              <Ionicons
-                name="share-social-outline"
-                size={18}
-                color="#fff"
-              />
+            <Pressable style={styles.shareButton} onPress={shareArticle}>
+              <Ionicons name="share-social-outline" size={18} color="#fff" />
 
               <Text style={styles.actionButtonText}>Share</Text>
             </Pressable>
@@ -329,6 +340,15 @@ const styles = StyleSheet.create({
     height: 260,
     width: "100%",
   },
+  imageCaption: {
+    backgroundColor: "#eeeeee",
+    color: "#555",
+    fontSize: 12,
+    fontStyle: "italic",
+    lineHeight: 17,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
   articleCard: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 22,
@@ -373,6 +393,36 @@ const styles = StyleSheet.create({
     lineHeight: 31,
     marginBottom: 24,
   },
+  adContainer: {
+    marginBottom: 28,
+    marginTop: 4,
+  },
+  adLabel: {
+    color: "#777",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    marginBottom: 6,
+    textTransform: "uppercase",
+  },
+  adCard: {
+    backgroundColor: "#f1f1f1",
+    borderColor: "#dddddd",
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 18,
+  },
+  adHeadline: {
+    color: "#111",
+    fontSize: 18,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  adCopy: {
+    color: "#555",
+    fontSize: 14,
+    lineHeight: 21,
+  },
   actionRow: {
     flexDirection: "row",
     marginTop: 10,
@@ -404,14 +454,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     marginLeft: 8,
-  },
-  imageCaption: {
-    backgroundColor: "#eeeeee",
-    color: "#555",
-    fontSize: 12,
-    fontStyle: "italic",
-    lineHeight: 17,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
   },
 });
