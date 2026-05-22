@@ -1,5 +1,11 @@
+import { Image } from "expo-image";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text } from "react-native";
+import {
+    Linking,
+    Pressable,
+    StyleSheet,
+    Text
+} from "react-native";
 
 import {
     getAdSlotByPlacement,
@@ -32,11 +38,45 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
 
   const activeAd = ads[activeIndex];
 
+  const handlePress = async () => {
+    const target = activeAd.url ?? activeAd.phone;
+
+    if (!target) return;
+
+    const link = activeAd.phone ? `tel:${activeAd.phone}` : target;
+
+    const canOpen = await Linking.canOpenURL(link);
+
+    if (canOpen) {
+      await Linking.openURL(link);
+    }
+  };
+
   return (
-    <Pressable style={styles.adBox}>
+    <Pressable
+      style={styles.adBox}
+      onPress={handlePress}
+      disabled={!activeAd.url && !activeAd.phone}
+    >
       <Text style={styles.adLabel}>{slot.label}</Text>
+
+      {activeAd.image ? (
+        <Image
+          source={{ uri: activeAd.image }}
+          style={styles.adImage}
+          contentFit="cover"
+          transition={250}
+          cachePolicy="memory-disk"
+        />
+      ) : null}
+
       <Text style={styles.adHeadline}>{activeAd.headline}</Text>
+
       <Text style={styles.adBody}>{activeAd.body}</Text>
+
+      {activeAd.callToAction ? (
+        <Text style={styles.callToAction}>{activeAd.callToAction}</Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -51,6 +91,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 18,
     marginTop: 2,
+    overflow: "hidden",
     padding: 18,
   },
   adLabel: {
@@ -58,8 +99,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 0.7,
-    marginBottom: 4,
+    marginBottom: 8,
     textTransform: "uppercase",
+  },
+  adImage: {
+    backgroundColor: "#ddd",
+    borderRadius: 10,
+    height: 140,
+    marginBottom: 12,
+    width: "100%",
   },
   adHeadline: {
     color: "#333",
@@ -73,5 +121,12 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 4,
     textAlign: "center",
+  },
+  callToAction: {
+    color: "#b00020",
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 10,
+    textTransform: "uppercase",
   },
 });
