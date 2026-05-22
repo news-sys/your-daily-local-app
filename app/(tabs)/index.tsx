@@ -161,7 +161,7 @@ function ListSection({ section }: { section: HomeSection }) {
         <Pressable
           onPress={() =>
             router.push({
-              pathname: "/category/[slug]",
+              pathname: "/(tabs)/category/[slug]",
               params: { slug: section.slug },
             })
           }

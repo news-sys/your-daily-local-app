@@ -1,46 +1,48 @@
-import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
-import React from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
-import { HapticTab } from '@/components/haptic-tab';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
+export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
-      
+        tabBarActiveTintColor: "#b00020",
+        tabBarStyle: {
+          backgroundColor: "#111",
+          borderTopColor: "#222",
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: "700",
+        },
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="home" size={28} color={color} />
+          title: "Home",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home" size={size} color={color} />
           ),
         }}
       />
+
       <Tabs.Screen
         name="breaking"
         options={{
-          title: 'Breaking',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="alert-circle" size={28} color={color} />
+          title: "Breaking",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="alert-circle" size={size} color={color} />
           ),
         }}
       />
+
       <Tabs.Screen
         name="news"
         options={{
-          title: 'News',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="newspaper" size={28} color={color} />
+          title: "News",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="newspaper" size={size} color={color} />
           ),
         }}
       />
@@ -48,10 +50,17 @@ export default function TabLayout() {
       <Tabs.Screen
         name="sports"
         options={{
-          title: 'Sports',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="football" size={28} color={color} />
+          title: "Sports",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="football" size={size} color={color} />
           ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="category/[slug]"
+        options={{
+          href: null,
         }}
       />
     </Tabs>
