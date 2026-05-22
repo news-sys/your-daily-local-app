@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import RotatingAdSlot from "@/components/RotatingAdSlot";
 import { getBreakingPosts, getHomepageSections } from "@/services/api";
 import type { HomeSection } from "@/types/HomeSection";
 import type { Post } from "@/types/Post";
@@ -79,12 +80,13 @@ export default function HomeScreen() {
       >
         <View style={styles.header}>
           <Image source={logo} style={styles.logo} resizeMode="contain" />
+
           <Text style={styles.tagline}>
             The news you need, when you need it
           </Text>
         </View>
 
-        <AdBox label="Featured Sponsor" />
+        <RotatingAdSlot placement="home-top" />
 
         {errorMessage ? (
           <View style={styles.errorBox}>
@@ -108,16 +110,14 @@ export default function HomeScreen() {
 
         {sections.map((section, index) => (
           <View key={section.id}>
-            {section.type === "ad" ? (
-              <AdBox label="Sponsor Message" />
-            ) : section.type === "lead" ? (
+            {section.type === "ad" ? null : section.type === "lead" ? (
               <LeadSection section={section} />
             ) : (
               <ListSection section={section} />
             )}
 
             {index < sections.length - 1 ? (
-              <AdBox label="Local Advertising Partner" />
+              <RotatingAdSlot placement="home-between-sections" />
             ) : null}
           </View>
         ))}
@@ -206,16 +206,6 @@ function ListSection({ section }: { section: HomeSection }) {
           </View>
         </Pressable>
       ))}
-    </View>
-  );
-}
-
-function AdBox({ label = "Advertisement" }: { label?: string }) {
-  return (
-    <View style={styles.adBox}>
-      <Text style={styles.adLabel}>Advertisement</Text>
-      <Text style={styles.adText}>{label}</Text>
-      <Text style={styles.adSubtext}>Your business could be here</Text>
     </View>
   );
 }
@@ -386,34 +376,5 @@ const styles = StyleSheet.create({
     color: "#888",
     fontSize: 12,
     marginTop: 8,
-  },
-  adBox: {
-    alignItems: "center",
-    backgroundColor: "#eeeeee",
-    borderColor: "#d0d0d0",
-    borderRadius: 14,
-    borderStyle: "dashed",
-    borderWidth: 1,
-    marginBottom: 18,
-    marginTop: 2,
-    padding: 18,
-  },
-  adLabel: {
-    color: "#777",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.7,
-    marginBottom: 4,
-    textTransform: "uppercase",
-  },
-  adText: {
-    color: "#333",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  adSubtext: {
-    color: "#666",
-    fontSize: 13,
-    marginTop: 4,
   },
 });

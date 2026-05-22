@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import RotatingAdSlot from "@/components/RotatingAdSlot";
 import { getPostById } from "@/services/api";
 import { isPostSaved, toggleSavedPost } from "@/services/savedPosts";
 import type { Post } from "@/types/Post";
@@ -38,19 +39,6 @@ function formatDisplayDate(date?: string): string {
   } catch {
     return date;
   }
-}
-
-function InArticleAd({ label }: { label: string }) {
-  return (
-    <View style={styles.adContainer}>
-      <Text style={styles.adLabel}>Sponsored</Text>
-
-      <View style={styles.adCard}>
-        <Text style={styles.adHeadline}>{label}</Text>
-        <Text style={styles.adCopy}>Your Daily Local sponsor placement</Text>
-      </View>
-    </View>
-  );
 }
 
 export default function ArticleScreen() {
@@ -130,7 +118,6 @@ export default function ArticleScreen() {
 
         <View style={styles.loadingContainer}>
           <Text style={styles.notFoundTitle}>Story not found</Text>
-
           <Text style={styles.centerText}>This story could not be loaded.</Text>
 
           <Pressable
@@ -216,7 +203,7 @@ export default function ArticleScreen() {
 
           <View style={styles.divider} />
 
-          <InArticleAd label="Sponsor Message" />
+          <RotatingAdSlot placement="article-top" />
 
           {bodyParagraphs.length > 0 ? (
             <>
@@ -231,15 +218,15 @@ export default function ArticleScreen() {
                     <Text style={styles.body}>{paragraph}</Text>
 
                     {isAfterSecondParagraph ? (
-                      <InArticleAd label="Local Advertising Partner" />
+                      <RotatingAdSlot placement="article-after-2" />
                     ) : null}
 
                     {isAfterFifthParagraph ? (
-                      <InArticleAd label="Community Sponsor" />
+                      <RotatingAdSlot placement="article-after-5" />
                     ) : null}
 
                     {isAfterLastParagraph ? (
-                      <InArticleAd label="Your Daily Local Sponsor" />
+                      <RotatingAdSlot placement="article-bottom" />
                     ) : null}
                   </View>
                 );
@@ -270,7 +257,6 @@ export default function ArticleScreen() {
 
             <Pressable style={styles.shareButton} onPress={shareArticle}>
               <Ionicons name="share-social-outline" size={18} color="#fff" />
-
               <Text style={styles.actionButtonText}>Share</Text>
             </Pressable>
           </View>
@@ -392,36 +378,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 31,
     marginBottom: 24,
-  },
-  adContainer: {
-    marginBottom: 28,
-    marginTop: 4,
-  },
-  adLabel: {
-    color: "#777",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.6,
-    marginBottom: 6,
-    textTransform: "uppercase",
-  },
-  adCard: {
-    backgroundColor: "#f1f1f1",
-    borderColor: "#dddddd",
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 18,
-  },
-  adHeadline: {
-    color: "#111",
-    fontSize: 18,
-    fontWeight: "900",
-    marginBottom: 6,
-  },
-  adCopy: {
-    color: "#555",
-    fontSize: 14,
-    lineHeight: 21,
   },
   actionRow: {
     flexDirection: "row",
