@@ -88,7 +88,8 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {breakingPosts.length > 0 ? (
+        {breakingPosts.length > 0 &&
+        breakingPosts[0]?.category === "Breaking" ? (
           <Pressable
             style={styles.breakingBar}
             onPress={() => router.push("/breaking")}
