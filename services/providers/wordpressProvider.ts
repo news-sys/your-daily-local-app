@@ -51,6 +51,9 @@ type WordPressPost = {
   _embedded?: {
     "wp:featuredmedia"?: {
       source_url?: string;
+      caption?: {
+        rendered?: string;
+      };
     }[];
   };
 };
@@ -92,6 +95,9 @@ function mapWordPressPost(post: WordPressPost): Post {
     excerpt: stripHtml(post.excerpt.rendered),
     body: stripHtml(post.content.rendered),
     image: post._embedded?.["wp:featuredmedia"]?.[0]?.source_url,
+    imageCaption: stripHtml(
+      post._embedded?.["wp:featuredmedia"]?.[0]?.caption?.rendered
+    ),
     category: getCategoryName(post.categories),
     date: post.date,
   };

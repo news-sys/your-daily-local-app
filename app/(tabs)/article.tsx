@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,6 +18,28 @@ import { getPostById } from "@/services/api";
 import { isPostSaved, toggleSavedPost } from "@/services/savedPosts";
 import type { Post } from "@/types/Post";
 
+function formatArticleBody(body?: string): string[] {
+  if (!body) return [];
+
+  return body
+    .split(/\n{1,}|\r\n{1,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
+function formatDisplayDate(date?: string): string {
+  if (!date) return "";
+
+  try {
+    return new Date(date).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return date;
+  }
+}
+
 export default function ArticleScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = params.id;
@@ -26,21 +48,29 @@ export default function ArticleScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaved, setIsSaved] = useState(false);
 
+  const bodyParagraphs = useMemo(
+    () => formatArticleBody(post?.body),
+    [post?.body]
+  );
+
   const loadPost = useCallback(async () => {
     if (!id) {
       setIsLoading(false);
       return;
     }
 
-    const result = await getPostById(id);
-    setPost(result);
+    try {
+      const result = await getPostById(id);
 
-    if (result) {
-      const saved = await isPostSaved(result.id);
-      setIsSaved(saved);
+      setPost(result);
+
+      if (result) {
+        const saved = await isPostSaved(result.id);
+        setIsSaved(saved);
+      }
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   }, [id]);
 
   useEffect(() => {
@@ -56,7 +86,7 @@ export default function ArticleScreen() {
         message: `${post.title}\n\nShared from Your Daily Local`,
       });
     } catch {
-      // User may cancel native share.
+      // Share canceled
     }
   };
 
@@ -69,11 +99,13 @@ export default function ArticleScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <Stack.Screen options={{ title: "Loading..." }} />
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "left", "right"]}
+      >
+        <StatusBar style="light" />
 
-        <View style={styles.centerState}>
+        <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
           <Text style={styles.centerText}>Loading story...</Text>
         </View>
@@ -83,15 +115,23 @@ export default function ArticleScreen() {
 
   if (!post) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <Stack.Screen options={{ title: "Story Not Found" }} />
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "left", "right"]}
+      >
+        <StatusBar style="light" />
 
-        <View style={styles.centerState}>
+        <View style={styles.loadingContainer}>
           <Text style={styles.notFoundTitle}>Story not found</Text>
-          <Text style={styles.centerText}>This story could not be loaded.</Text>
 
-          <Pressable style={styles.backButtonLarge} onPress={() => router.back()}>
+          <Text style={styles.centerText}>
+            This story could not be loaded.
+          </Text>
+
+          <Pressable
+            style={styles.backButtonLarge}
+            onPress={() => router.back()}
+          >
             <Text style={styles.backButtonLargeText}>Go Back</Text>
           </Pressable>
         </View>
@@ -100,26 +140,41 @@ export default function ArticleScreen() {
   }
 
   return (
-    <SafeAreaView 
+    <SafeAreaView
       style={styles.safeArea}
       edges={["top", "left", "right"]}
     >
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
 
       <Stack.Screen
         options={{
-          title: post.category || "Story",
+          title: "",
+          headerShadowVisible: false,
+          headerStyle: {
+            backgroundColor: "#111",
+          },
+          headerTintColor: "#fff",
           headerRight: () => (
             <View style={styles.headerActions}>
-              <Pressable onPress={shareArticle} style={styles.headerIconButton}>
-                <Ionicons name="share-social-outline" size={22} color="#b00020" />
+              <Pressable
+                onPress={shareArticle}
+                style={styles.headerIconButton}
+              >
+                <Ionicons
+                  name="share-social-outline"
+                  size={22}
+                  color="#fff"
+                />
               </Pressable>
 
-              <Pressable onPress={handleToggleSaved} style={styles.headerIconButton}>
+              <Pressable
+                onPress={handleToggleSaved}
+                style={styles.headerIconButton}
+              >
                 <Ionicons
                   name={isSaved ? "bookmark" : "bookmark-outline"}
                   size={22}
-                  color="#b00020"
+                  color="#fff"
                 />
               </Pressable>
             </View>
@@ -127,53 +182,87 @@ export default function ArticleScreen() {
         }}
       />
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+      >
         {post.image ? (
-          <Image
-            source={{ uri: post.image }}
-            style={styles.heroImage}
-            contentFit="cover"
-            transition={250}
-            cachePolicy="memory-disk"
-          />
-        ) : null}
+          <View>
+            <Image
+              source={{ uri: post.image }}
+              style={styles.heroImage}
+              contentFit="cover"
+              transition={250}
+              cachePolicy="memory-disk"
+            />
+
+          {post.imageCaption ? (
+            <Text style={styles.imageCaption}>{post.imageCaption}</Text>
+          ) : null}
+        </View>
+      ) : null}
 
         <View style={styles.articleCard}>
-          {post.category ? <Text style={styles.category}>{post.category}</Text> : null}
+          <View style={styles.metaRow}>
+            {post.category ? (
+              <Text style={styles.category}>{post.category}</Text>
+            ) : null}
+
+            {post.date ? (
+              <Text style={styles.date}>
+                {formatDisplayDate(post.date)}
+              </Text>
+            ) : null}
+          </View>
 
           <Text style={styles.title}>{post.title}</Text>
 
-          {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
-
           <View style={styles.divider} />
 
-          {post.body ? (
-            <Text style={styles.body}>{post.body}</Text>
+          {bodyParagraphs.length > 0 ? (
+            bodyParagraphs.map((paragraph, index) => (
+              <Text key={`${index}-${paragraph.slice(0, 20)}`} style={styles.body}>
+                {paragraph}
+              </Text>
+            ))
           ) : (
-            <Text style={styles.body}>No article text available.</Text>
+            <Text style={styles.body}>
+              No article text available.
+            </Text>
           )}
 
-          <Pressable
-            style={[
-              styles.saveButton,
-              isSaved ? styles.savedButton : styles.unsavedButton,
-            ]}
-            onPress={handleToggleSaved}
-          >
-            <Ionicons
-              name={isSaved ? "bookmark" : "bookmark-outline"}
-              size={19}
-              color="#fff"
-            />
-            <Text style={styles.saveButtonText}>
-              {isSaved ? "Saved Story" : "Save Story"}
-            </Text>
-          </Pressable>
+          <View style={styles.actionRow}>
+            <Pressable
+              style={[
+                styles.actionButton,
+                isSaved ? styles.savedButton : styles.unsavedButton,
+              ]}
+              onPress={handleToggleSaved}
+            >
+              <Ionicons
+                name={isSaved ? "bookmark" : "bookmark-outline"}
+                size={18}
+                color="#fff"
+              />
 
-          <Pressable style={styles.shareButton} onPress={shareArticle}>
-            <Ionicons name="share-social-outline" size={19} color="#fff" />
-            <Text style={styles.shareButtonText}>Share Story</Text>
-          </Pressable>
+              <Text style={styles.actionButtonText}>
+                {isSaved ? "Saved" : "Save"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.shareButton}
+              onPress={shareArticle}
+            >
+              <Ionicons
+                name="share-social-outline"
+                size={18}
+                color="#fff"
+              />
+
+              <Text style={styles.actionButtonText}>Share</Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -185,6 +274,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#111",
     flex: 1,
   },
+  loadingContainer: {
+    alignItems: "center",
+    backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
   container: {
     backgroundColor: "#f6f6f6",
     borderTopLeftRadius: 18,
@@ -194,30 +292,23 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: 36,
   },
-  centerState: {
-    alignItems: "center",
-    backgroundColor: "#f6f6f6",
-    flex: 1,
-    justifyContent: "center",
-    padding: 24,
-  },
   centerText: {
     color: "#666",
     fontSize: 15,
-    lineHeight: 21,
+    lineHeight: 22,
     marginTop: 10,
     textAlign: "center",
   },
   notFoundTitle: {
     color: "#111",
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: "900",
   },
   backButtonLarge: {
     backgroundColor: "#b00020",
-    borderRadius: 12,
-    marginTop: 20,
-    paddingHorizontal: 18,
+    borderRadius: 14,
+    marginTop: 22,
+    paddingHorizontal: 20,
     paddingVertical: 12,
   },
   backButtonLargeText: {
@@ -228,10 +319,10 @@ const styles = StyleSheet.create({
   headerActions: {
     alignItems: "center",
     flexDirection: "row",
+    marginRight: 6,
   },
   headerIconButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    marginLeft: 14,
   },
   heroImage: {
     backgroundColor: "#ddd",
@@ -242,72 +333,85 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
-    marginTop: -18,
-    padding: 18,
+    marginTop: 0,
+    padding: 22,
+  },
+  metaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 14,
   },
   category: {
     color: "#b00020",
     fontSize: 12,
     fontWeight: "900",
     letterSpacing: 0.7,
-    marginBottom: 8,
     textTransform: "uppercase",
+  },
+  date: {
+    color: "#888",
+    fontSize: 12,
+    fontWeight: "600",
   },
   title: {
     color: "#111",
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: "900",
-    lineHeight: 34,
-  },
-  date: {
-    color: "#777",
-    fontSize: 13,
-    fontWeight: "600",
-    marginTop: 10,
+    letterSpacing: -0.4,
+    lineHeight: 38,
   },
   divider: {
-    backgroundColor: "#e5e5e5",
+    backgroundColor: "#e4e4e4",
     height: 1,
-    marginVertical: 18,
+    marginVertical: 22,
+    width: "100%",
   },
   body: {
     color: "#222",
-    fontSize: 17,
-    lineHeight: 27,
+    fontSize: 18,
+    lineHeight: 31,
+    marginBottom: 24,
   },
-  saveButton: {
-    alignItems: "center",
-    borderRadius: 14,
+  actionRow: {
     flexDirection: "row",
-    justifyContent: "center",
-    marginTop: 28,
-    padding: 14,
+    marginTop: 10,
   },
-  unsavedButton: {
-    backgroundColor: "#111",
+  actionButton: {
+    alignItems: "center",
+    borderRadius: 999,
+    flexDirection: "row",
+    marginRight: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
   },
   savedButton: {
     backgroundColor: "#b00020",
   },
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
-    marginLeft: 8,
+  unsavedButton: {
+    backgroundColor: "#444",
   },
   shareButton: {
     alignItems: "center",
-    backgroundColor: "#b00020",
-    borderRadius: 14,
+    backgroundColor: "#1f6ed4",
+    borderRadius: 999,
     flexDirection: "row",
-    justifyContent: "center",
-    marginTop: 12,
-    padding: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
   },
-  shareButtonText: {
+  actionButtonText: {
     color: "#fff",
-    fontSize: 16,
-    fontWeight: "900",
+    fontSize: 14,
+    fontWeight: "800",
     marginLeft: 8,
+  },
+  imageCaption: {
+    backgroundColor: "#eeeeee",
+    color: "#555",
+    fontSize: 12,
+    fontStyle: "italic",
+    lineHeight: 17,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
 });
