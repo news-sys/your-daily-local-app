@@ -1,5 +1,13 @@
-import { Redirect } from "expo-router";
+import PostFeed from "@/components/PostFeed";
+import { getPostsByCategory } from "@/services/api";
 
 export default function BreakingTab() {
-  return <Redirect href="/category/breaking" />;
+  return (
+    <PostFeed
+      title="Breaking"
+      fetchPosts={(page = 1) => getPostsByCategory("Breaking", page)}
+      emptyMessage="No breaking news stories available."
+      showAds={false}
+    />
+  );
 }
