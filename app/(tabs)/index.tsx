@@ -155,7 +155,20 @@ function ListSection({ section }: { section: HomeSection }) {
 
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{section.title}</Text>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: "/category/[slug]",
+              params: { slug: section.slug },
+            })
+          }
+        >
+          <Text style={styles.viewAllText}>View All</Text>
+        </Pressable>
+      </View>
 
       {section.posts.map((post) => (
         <Pressable
@@ -309,11 +322,22 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 12,
   },
+  sectionHeaderRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
   sectionTitle: {
     color: "#111",
     fontSize: 22,
     fontWeight: "900",
-    marginBottom: 12,
+  },
+  viewAllText: {
+    color: "#b00020",
+    fontSize: 13,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
   storyRow: {
     backgroundColor: "#fff",
