@@ -29,6 +29,38 @@ function filterByCategory(category: string): Post[] {
   );
 }
 
+export async function searchPosts(
+  query: string,
+  page = 1
+): Promise<PaginatedPosts> {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return {
+      posts: [],
+      hasMore: false,
+      nextPage: null,
+    };
+  }
+
+  const filteredPosts = sortNewestFirst(
+    mockPosts.filter((post) => {
+      const searchableText = [
+        post.title,
+        post.excerpt,
+        post.body,
+        post.category,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(normalizedQuery);
+    })
+  );
+
+  return paginate(filteredPosts, page);
+}
+
 export async function getTopStories(page = 1): Promise<PaginatedPosts> {
   return paginate(sortNewestFirst(mockPosts), page);
 }

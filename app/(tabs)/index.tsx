@@ -53,9 +53,9 @@ export default function HomeScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
+        <StatusBar style="light" />
 
-        <View style={styles.centerState}>
+        <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
           <Text style={styles.centerText}>Loading Your Daily Local...</Text>
         </View>
@@ -64,8 +64,8 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <StatusBar style="light" />
 
       <ScrollView
         style={styles.container}
@@ -94,6 +94,7 @@ export default function HomeScreen() {
             onPress={() => router.push("/breaking")}
           >
             <Text style={styles.breakingLabel}>Breaking</Text>
+
             <Text style={styles.breakingText} numberOfLines={1}>
               {breakingPosts[0].title}
             </Text>
@@ -129,7 +130,7 @@ function LeadSection({ section }: { section: HomeSection }) {
         style={styles.leadCard}
         onPress={() =>
           router.push({
-            pathname: "/article",
+            pathname: "/(tabs)/article",
             params: { id: String(leadStory.id) },
           })
         }
@@ -176,7 +177,7 @@ function ListSection({ section }: { section: HomeSection }) {
           style={styles.storyRow}
           onPress={() =>
             router.push({
-              pathname: "/article",
+              pathname: "/(tabs)/article",
               params: { id: String(post.id) },
             })
           }
@@ -211,23 +212,27 @@ function AdBox() {
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#f6f6f6",
+    backgroundColor: "#111",
     flex: 1,
+  },
+  loadingContainer: {
+    alignItems: "center",
+    backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
   },
   container: {
     backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
     flex: 1,
   },
   content: {
     padding: 16,
-    paddingBottom: 36,
-  },
-  centerState: {
-    alignItems: "center",
-    backgroundColor: "#f6f6f6",
-    flex: 1,
-    justifyContent: "center",
-    padding: 24,
+    paddingBottom: 16,
   },
   centerText: {
     color: "#666",

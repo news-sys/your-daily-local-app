@@ -100,7 +100,10 @@ export default function ArticleScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView 
+      style={styles.safeArea}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar style="dark" />
 
       <Stack.Screen
@@ -179,11 +182,13 @@ export default function ArticleScreen() {
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#f6f6f6",
+    backgroundColor: "#111",
     flex: 1,
   },
   container: {
     backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
     flex: 1,
   },
   content: {

@@ -1,5 +1,6 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -13,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { getSavedPosts, toggleSavedPost } from "@/services/savedPosts";
 import type { PaginatedPosts, Post } from "@/types/Post";
 
 type PostFeedProps = {
@@ -20,11 +22,12 @@ type PostFeedProps = {
   title?: string;
   emptyMessage?: string;
   showAds?: boolean;
+  reloadOnFocus?: boolean;
+  onRemovePost?: (post: Post) => Promise<void>;
+  removePostLabel?: string;
 };
 
-type FeedItem =
-  | { type: "post"; post: Post }
-  | { type: "ad"; id: string };
+type FeedItem = { type: "post"; post: Post } | { type: "ad"; id: string };
 
 function buildFeedItems(posts: Post[], showAds: boolean): FeedItem[] {
   if (!showAds) {
@@ -49,14 +52,27 @@ export default function PostFeed({
   title = "Your Daily Local",
   emptyMessage = "No stories available.",
   showAds = true,
+  reloadOnFocus = false,
+  onRemovePost,
+  removePostLabel = "Remove",
 }: PostFeedProps) {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [savedPostIds, setSavedPostIds] = useState<number[]>([]);
   const [nextPage, setNextPage] = useState<number | null>(1);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [savingPostId, setSavingPostId] = useState<number | null>(null);
+  const [removingPostId, setRemovingPostId] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const isSavedStoriesFeed = title === "Saved Stories";
+
+  const refreshSavedPostIds = useCallback(async () => {
+    const savedPosts = await getSavedPosts();
+    setSavedPostIds(savedPosts.map((post) => post.id));
+  }, []);
 
   const loadFirstPage = useCallback(
     async (refreshing = false) => {
@@ -64,7 +80,10 @@ export default function PostFeed({
         refreshing ? setIsRefreshing(true) : setIsLoading(true);
         setErrorMessage(null);
 
-        const result = await fetchPosts(1);
+        const [result] = await Promise.all([
+          fetchPosts(1),
+          refreshSavedPostIds(),
+        ]);
 
         setPosts(result.posts);
         setHasMore(result.hasMore);
@@ -76,7 +95,7 @@ export default function PostFeed({
         setIsRefreshing(false);
       }
     },
-    [fetchPosts]
+    [fetchPosts, refreshSavedPostIds]
   );
 
   const loadMore = useCallback(async () => {
@@ -97,27 +116,79 @@ export default function PostFeed({
     } finally {
       setIsLoadingMore(false);
     }
-  }, [
-    fetchPosts,
-    hasMore,
-    nextPage,
-    isLoadingMore,
-    isLoading,
-    isRefreshing,
-  ]);
+  }, [fetchPosts, hasMore, nextPage, isLoadingMore, isLoading, isRefreshing]);
+
+  const handleToggleSavedPost = useCallback(
+    async (post: Post) => {
+      if (savingPostId) return;
+
+      try {
+        setSavingPostId(post.id);
+
+        const isNowSaved = await toggleSavedPost(post);
+
+        setSavedPostIds((currentIds) => {
+          if (isNowSaved) {
+            return [...currentIds, post.id];
+          }
+
+          return currentIds.filter((id) => id !== post.id);
+        });
+      } catch {
+        setErrorMessage("Unable to update saved story. Please try again.");
+      } finally {
+        setSavingPostId(null);
+      }
+    },
+    [savingPostId]
+  );
+
+  const handleRemovePost = useCallback(
+    async (post: Post) => {
+      if (!onRemovePost || removingPostId) return;
+
+      try {
+        setRemovingPostId(post.id);
+        await onRemovePost(post);
+
+        setPosts((currentPosts) =>
+          currentPosts.filter((item) => item.id !== post.id)
+        );
+
+        setSavedPostIds((currentIds) =>
+          currentIds.filter((id) => id !== post.id)
+        );
+      } catch {
+        setErrorMessage("Unable to remove story. Please try again.");
+      } finally {
+        setRemovingPostId(null);
+      }
+    },
+    [onRemovePost, removingPostId]
+  );
 
   useEffect(() => {
     loadFirstPage();
   }, [loadFirstPage]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshSavedPostIds();
+
+      if (reloadOnFocus) {
+        loadFirstPage();
+      }
+    }, [reloadOnFocus, loadFirstPage, refreshSavedPostIds])
+  );
 
   const feedItems = buildFeedItems(posts, showAds);
 
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
+        <StatusBar style="light" />
 
-        <View style={styles.centerState}>
+        <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
           <Text style={styles.centerText}>Loading stories...</Text>
         </View>
@@ -126,8 +197,8 @@ export default function PostFeed({
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+    <SafeAreaView style={styles.safeArea}edges={["top", "left", "right"]}>
+      <StatusBar style="light" />
 
       <FlatList
         style={styles.container}
@@ -175,7 +246,26 @@ export default function PostFeed({
         }
         ListEmptyComponent={
           <View style={styles.centerState}>
+            <Ionicons name="bookmark-outline" size={38} color="#999" />
+
             <Text style={styles.centerText}>{emptyMessage}</Text>
+
+            {isSavedStoriesFeed ? (
+              <>
+                <Text style={styles.emptySubtext}>
+                  Browse stories and tap the bookmark icon to save them here.
+                </Text>
+
+                <Pressable
+                  style={styles.browseButton}
+                  onPress={() => router.push("/")}
+                >
+                  <Text style={styles.browseButtonText}>
+                    Browse Latest Stories
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
           </View>
         }
         renderItem={({ item }) => {
@@ -189,13 +279,14 @@ export default function PostFeed({
           }
 
           const post = item.post;
+          const isSaved = savedPostIds.includes(post.id);
 
           return (
             <Pressable
               style={styles.card}
               onPress={() =>
                 router.push({
-                  pathname: "/article",
+                  pathname: "/(tabs)/article",
                   params: { id: String(post.id) },
                 })
               }
@@ -210,6 +301,23 @@ export default function PostFeed({
                 />
               ) : null}
 
+              {!onRemovePost ? (
+                <Pressable
+                  style={styles.bookmarkButton}
+                  disabled={savingPostId === post.id}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    handleToggleSavedPost(post);
+                  }}
+                >
+                  <Ionicons
+                    name={isSaved ? "bookmark" : "bookmark-outline"}
+                    size={22}
+                    color={isSaved ? "#b00020" : "#111"}
+                  />
+                </Pressable>
+              ) : null}
+
               <View style={styles.cardBody}>
                 {post.category ? (
                   <Text style={styles.category}>{post.category}</Text>
@@ -221,8 +329,24 @@ export default function PostFeed({
                   <Text style={styles.excerpt}>{post.excerpt}</Text>
                 ) : null}
 
-                {post.date ? (
-                  <Text style={styles.date}>{post.date}</Text>
+                {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+
+                {onRemovePost ? (
+                  <Pressable
+                    style={styles.removeButton}
+                    disabled={removingPostId === post.id}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      handleRemovePost(post);
+                    }}
+                  >
+                    <Ionicons name="bookmark" size={16} color="#b00020" />
+                    <Text style={styles.removeButtonText}>
+                      {removingPostId === post.id
+                        ? "Removing..."
+                        : removePostLabel}
+                    </Text>
+                  </Pressable>
                 ) : null}
               </View>
             </Pressable>
@@ -235,16 +359,27 @@ export default function PostFeed({
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: "#f6f6f6",
+    backgroundColor: "#111",
     flex: 1,
+  },
+  loadingContainer: {
+    alignItems: "center",
+    backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
   },
   container: {
     backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
     flex: 1,
   },
   listContent: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 16,
   },
   emptyListContent: {
     flexGrow: 1,
@@ -278,6 +413,26 @@ const styles = StyleSheet.create({
     marginTop: 10,
     textAlign: "center",
   },
+  emptySubtext: {
+    color: "#777",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+    maxWidth: 280,
+    textAlign: "center",
+  },
+  browseButton: {
+    backgroundColor: "#b00020",
+    borderRadius: 999,
+    marginTop: 18,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  browseButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+  },
   errorBox: {
     backgroundColor: "#fdecec",
     borderColor: "#f4b4b4",
@@ -297,6 +452,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 16,
     overflow: "hidden",
+    position: "relative",
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -310,6 +466,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#ddd",
     height: 190,
     width: "100%",
+  },
+  bookmarkButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.92)",
+    borderRadius: 999,
+    height: 40,
+    justifyContent: "center",
+    position: "absolute",
+    right: 12,
+    top: 12,
+    width: 40,
+    zIndex: 2,
   },
   cardBody: {
     padding: 14,
@@ -338,6 +506,23 @@ const styles = StyleSheet.create({
     color: "#888",
     fontSize: 12,
     marginTop: 10,
+  },
+  removeButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderColor: "#b00020",
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: "row",
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  removeButtonText: {
+    color: "#b00020",
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 6,
   },
   footerLoader: {
     alignItems: "center",

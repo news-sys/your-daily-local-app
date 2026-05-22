@@ -58,11 +58,27 @@ export default function TabsLayout() {
       />
 
       <Tabs.Screen
-        name="category/[slug]"
+        name="saved"
         options={{
-          href: null,
+          title: "Saved",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="bookmark" size={size} color={color} />
+          ),
         }}
       />
+
+      <Tabs.Screen
+        name="search"
+        options={{
+          title: "Search",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="search" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen name="article" options={{ href: null }} />
+      <Tabs.Screen name="category/[slug]" options={{ href: null }} />
     </Tabs>
   );
 }
