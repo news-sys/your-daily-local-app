@@ -1,4 +1,4 @@
-import { useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 
 import PostFeed from "@/components/PostFeed";
 import { getPostsByCategory } from "@/services/api";
@@ -27,11 +27,15 @@ export default function CategoryScreen() {
   const category = CATEGORY_MAP[slug] ?? slug;
 
   return (
-    <PostFeed
-      title={title}
-      fetchPosts={(page = 1) => getPostsByCategory(category, page)}
-      emptyMessage={`No ${title.toLowerCase()} stories available.`}
-      showAds
-    />
+    <>
+      <Stack.Screen options={{ title }} />
+
+      <PostFeed
+        title={title}
+        fetchPosts={(page = 1) => getPostsByCategory(category, page)}
+        emptyMessage={`No ${title.toLowerCase()} stories available.`}
+        showAds
+      />
+    </>
   );
 }

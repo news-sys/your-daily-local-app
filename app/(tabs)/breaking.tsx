@@ -1,13 +1,5 @@
-import PostFeed from "@/components/PostFeed";
-import { getBreakingPosts } from "@/services/api";
+import { Redirect } from "expo-router";
 
-export default function BreakingScreen() {
-  return (
-    <PostFeed
-      title="Breaking"
-      fetchPosts={getBreakingPosts}
-      emptyMessage="No breaking news stories available."
-      showAds={false}
-    />
-  );
+export default function BreakingTab() {
+  return <Redirect href="/category/breaking" />;
 }

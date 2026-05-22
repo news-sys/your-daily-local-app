@@ -1,13 +1,5 @@
-import PostFeed from "@/components/PostFeed";
-import { getNewsPosts } from "@/services/api";
+import { Redirect } from "expo-router";
 
-export default function NewsScreen() {
-  return (
-    <PostFeed
-      title="News"
-      fetchPosts={getNewsPosts}
-      emptyMessage="No news stories available."
-      showAds
-    />
-  );
+export default function NewsTab() {
+  return <Redirect href="/category/latest-news" />;
 }

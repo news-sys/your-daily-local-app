@@ -1,13 +1,5 @@
-import PostFeed from "@/components/PostFeed";
-import { getSportsPosts } from "@/services/api";
+import { Redirect } from "expo-router";
 
-export default function SportsScreen() {
-  return (
-    <PostFeed
-      title="Sports"
-      fetchPosts={getSportsPosts}
-      emptyMessage="No sports stories available."
-      showAds
-    />
-  );
+export default function SportsTab() {
+  return <Redirect href="/category/sports" />;
 }
