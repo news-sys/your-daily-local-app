@@ -5,19 +5,17 @@ import type { PaginatedPosts, Post } from "@/types/Post";
 const PAGE_SIZE = 5;
 
 function sortNewestFirst(posts: Post[]): Post[] {
-  return [...posts].sort((a, b) => {
-    return new Date(b.date).getTime() - new Date(a.date).getTime();
-  });
+  return [...posts].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
 }
 
 function paginate(posts: Post[], page: number): PaginatedPosts {
   const start = (page - 1) * PAGE_SIZE;
   const end = start + PAGE_SIZE;
 
-  const paginatedPosts = posts.slice(start, end);
-
   return {
-    posts: paginatedPosts,
+    posts: posts.slice(start, end),
     hasMore: end < posts.length,
     nextPage: end < posts.length ? page + 1 : null,
   };
@@ -63,31 +61,40 @@ export async function getHomepageSections(): Promise<HomeSection[]> {
     {
       id: "top-story",
       title: "Top Story",
+      slug: "top-story",
       type: "lead",
+      category: "featured",
       posts: topStories.slice(0, 1),
     },
     {
       id: "latest-news",
       title: "Latest News",
+      slug: "latest-news",
       type: "list",
+      category: "News",
       posts: newsPosts.slice(0, 4),
     },
     {
       id: "ad-1",
       title: "Advertisement",
+      slug: "ad-1",
       type: "ad",
       posts: [],
     },
     {
       id: "sports",
       title: "Sports",
+      slug: "sports",
       type: "list",
+      category: "Sports",
       posts: sportsPosts.slice(0, 4),
     },
     {
       id: "forest-county-news",
       title: "Forest County News",
+      slug: "forest-county-news",
       type: "list",
+      category: "Forest County News",
       posts: newsPosts.slice(0, 3),
     },
   ];
