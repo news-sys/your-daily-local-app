@@ -1,16 +1,16 @@
 import { Image } from "expo-image";
 import { useEffect, useMemo, useState } from "react";
-import {
-    Linking,
-    Pressable,
-    StyleSheet,
-    Text
-} from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import {
     getAdSlotByPlacement,
     type AdPlacement,
+    type LocalAdImageKey,
 } from "@/data/adSlots";
+
+const localAdImages: Record<LocalAdImageKey, number> = {
+  "sample-banner": require("../assets/images/ads/sample-banner.jpg"),
+};
 
 type RotatingAdSlotProps = {
   placement: AdPlacement;
@@ -37,6 +37,9 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
   }
 
   const activeAd = ads[activeIndex];
+  const imageSource = activeAd.imageKey
+    ? localAdImages[activeAd.imageKey]
+    : undefined;
 
   const handlePress = async () => {
     const target = activeAd.url ?? activeAd.phone;
@@ -44,7 +47,6 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
     if (!target) return;
 
     const link = activeAd.phone ? `tel:${activeAd.phone}` : target;
-
     const canOpen = await Linking.canOpenURL(link);
 
     if (canOpen) {
@@ -53,80 +55,57 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
   };
 
   return (
-    <Pressable
-      style={styles.adBox}
-      onPress={handlePress}
-      disabled={!activeAd.url && !activeAd.phone}
-    >
-      <Text style={styles.adLabel}>{slot.label}</Text>
-
-      {activeAd.image ? (
-        <Image
-          source={{ uri: activeAd.image }}
-          style={styles.adImage}
-          contentFit="cover"
-          transition={250}
-          cachePolicy="memory-disk"
-        />
-      ) : null}
-
-      <Text style={styles.adHeadline}>{activeAd.headline}</Text>
-
-      <Text style={styles.adBody}>{activeAd.body}</Text>
-
-      {activeAd.callToAction ? (
-        <Text style={styles.callToAction}>{activeAd.callToAction}</Text>
-      ) : null}
-    </Pressable>
+    <View style={styles.wrapper}>
+      <Pressable
+        style={styles.adBox}
+        onPress={handlePress}
+        disabled={!activeAd.url && !activeAd.phone}
+      >
+        {imageSource ? (
+          <Image
+            source={imageSource}
+            style={styles.adImage}
+            contentFit="contain"
+            transition={250}
+            cachePolicy="memory-disk"
+          />
+        ) : (
+          <View style={styles.placeholder}>
+            <Text style={styles.placeholderText}>Ad Space Available</Text>
+          </View>
+        )}
+      </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  adBox: {
-    alignItems: "center",
-    backgroundColor: "#eeeeee",
-    borderColor: "#d0d0d0",
-    borderRadius: 14,
-    borderStyle: "dashed",
-    borderWidth: 1,
+  wrapper: {
     marginBottom: 18,
     marginTop: 2,
-    overflow: "hidden",
-    padding: 18,
-  },
-  adLabel: {
-    color: "#777",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.7,
-    marginBottom: 8,
-    textTransform: "uppercase",
-  },
-  adImage: {
-    backgroundColor: "#ddd",
-    borderRadius: 10,
-    height: 140,
-    marginBottom: 12,
     width: "100%",
   },
-  adHeadline: {
-    color: "#333",
-    fontSize: 16,
-    fontWeight: "900",
-    textAlign: "center",
+  adBox: {
+    backgroundColor: "transparent",
+    width: "100%",
   },
-  adBody: {
-    color: "#666",
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
-    textAlign: "center",
+  adImage: {
+    aspectRatio: 900 / 650,
+    backgroundColor: "transparent",
+    width: "100%",
   },
-  callToAction: {
-    color: "#b00020",
+  placeholder: {
+    alignItems: "center",
+    aspectRatio: 900 / 650,
+    backgroundColor: "#f1f1f1",
+    borderColor: "#d0d0d0",
+    borderWidth: 1,
+    justifyContent: "center",
+    width: "100%",
+  },
+  placeholderText: {
+    color: "#777",
     fontSize: 13,
-    fontWeight: "900",
-    marginTop: 10,
-    textTransform: "uppercase",
+    fontWeight: "800",
   },
 });
