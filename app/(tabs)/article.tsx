@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
-import { getPostById } from "@/services/api";
+import { getPostById, getPostsByCategory } from "@/services/api";
 import { isPostSaved, toggleSavedPost } from "@/services/savedPosts";
 import type { Post } from "@/types/Post";
 
@@ -46,6 +46,7 @@ export default function ArticleScreen() {
   const id = params.id;
 
   const [post, setPost] = useState<Post | undefined>();
+  const [relatedPosts, setRelatedPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaved, setIsSaved] = useState(false);
 
@@ -68,6 +69,16 @@ export default function ArticleScreen() {
       if (result) {
         const saved = await isPostSaved(result.id);
         setIsSaved(saved);
+
+        if (result.category) {
+          const related = await getPostsByCategory(result.category);
+
+          setRelatedPosts(
+            related.posts
+              .filter((relatedPost) => relatedPost.id !== result.id)
+              .slice(0, 3)
+          );
+        }
       }
     } finally {
       setIsLoading(false);
@@ -118,7 +129,10 @@ export default function ArticleScreen() {
 
         <View style={styles.loadingContainer}>
           <Text style={styles.notFoundTitle}>Story not found</Text>
-          <Text style={styles.centerText}>This story could not be loaded.</Text>
+
+          <Text style={styles.centerText}>
+            This story could not be loaded.
+          </Text>
 
           <Pressable
             style={styles.backButtonLarge}
@@ -236,6 +250,43 @@ export default function ArticleScreen() {
             <Text style={styles.body}>No article text available.</Text>
           )}
 
+          {relatedPosts.length > 0 ? (
+            <View style={styles.relatedSection}>
+              <Text style={styles.relatedTitle}>Related Stories</Text>
+
+              {relatedPosts.map((relatedPost) => (
+                <Pressable
+                  key={String(relatedPost.id)}
+                  style={styles.relatedCard}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(tabs)/article",
+                      params: { id: String(relatedPost.id) },
+                    })
+                  }
+                >
+                  {relatedPost.image ? (
+                    <Image
+                      source={{ uri: relatedPost.image }}
+                      style={styles.relatedImage}
+                      contentFit="cover"
+                    />
+                  ) : null}
+
+                  <View style={styles.relatedContent}>
+                    <Text style={styles.relatedCategory}>
+                      {relatedPost.category}
+                    </Text>
+
+                    <Text style={styles.relatedHeadline}>
+                      {relatedPost.title}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
           <View style={styles.actionRow}>
             <Pressable
               style={[
@@ -257,6 +308,7 @@ export default function ArticleScreen() {
 
             <Pressable style={styles.shareButton} onPress={shareArticle}>
               <Ionicons name="share-social-outline" size={18} color="#fff" />
+
               <Text style={styles.actionButtonText}>Share</Text>
             </Pressable>
           </View>
@@ -378,6 +430,41 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 31,
     marginBottom: 24,
+  },
+  relatedSection: {
+    marginTop: 16,
+  },
+  relatedTitle: {
+    color: "#111",
+    fontSize: 24,
+    fontWeight: "900",
+    marginBottom: 16,
+  },
+  relatedCard: {
+    backgroundColor: "#f7f7f7",
+    borderRadius: 16,
+    marginBottom: 14,
+    overflow: "hidden",
+  },
+  relatedImage: {
+    height: 180,
+    width: "100%",
+  },
+  relatedContent: {
+    padding: 14,
+  },
+  relatedCategory: {
+    color: "#b00020",
+    fontSize: 11,
+    fontWeight: "900",
+    marginBottom: 6,
+    textTransform: "uppercase",
+  },
+  relatedHeadline: {
+    color: "#111",
+    fontSize: 18,
+    fontWeight: "800",
+    lineHeight: 24,
   },
   actionRow: {
     flexDirection: "row",
