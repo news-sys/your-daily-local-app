@@ -8,8 +8,8 @@ import {
     type LocalAdImageKey,
 } from "@/data/adSlots";
 
-const localAdImages: Record<LocalAdImageKey, number> = {
-  "sample-banner": require("../assets/images/ads/sample-banner.jpg"),
+const localAdImages: Partial<Record<LocalAdImageKey, number>> = {
+  "sample-ad": require("../assets/images/ads/sample-banner.jpg"),
 };
 
 type RotatingAdSlotProps = {

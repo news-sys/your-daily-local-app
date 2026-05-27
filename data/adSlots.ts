@@ -6,7 +6,13 @@ export type AdPlacement =
   | "article-after-5"
   | "article-bottom";
 
-export type LocalAdImageKey = "sample-banner";
+export type LocalAdImageKey =
+  | "sample-ad"
+  | "sponsor-1"
+  | "sponsor-2"
+  | "sponsor-3"
+  | "sponsor-4"
+  | "sponsor-5";
 
 export type AdItem = {
   id: string;
@@ -28,8 +34,12 @@ export const adSlots: AdSlot[] = [
     ads: [
       {
         id: "home-top-1",
-        imageKey: "sample-banner",
+        imageKey: "sample-ad",
         url: "https://yourdailylocal.com/advertise",
+      },
+      {
+        id: "home-top-2",
+        imageKey: "sponsor-1",
       },
     ],
   },
@@ -39,8 +49,12 @@ export const adSlots: AdSlot[] = [
     ads: [
       {
         id: "home-between-1",
-        imageKey: "sample-banner",
+        imageKey: "sample-ad",
         url: "https://yourdailylocal.com/advertise",
+      },
+      {
+        id: "home-between-2",
+        imageKey: "sponsor-2",
       },
     ],
   },
@@ -50,8 +64,12 @@ export const adSlots: AdSlot[] = [
     ads: [
       {
         id: "article-top-1",
-        imageKey: "sample-banner",
+        imageKey: "sample-ad",
         url: "https://yourdailylocal.com/advertise",
+      },
+      {
+        id: "article-top-2",
+        imageKey: "sponsor-3",
       },
     ],
   },
@@ -61,8 +79,12 @@ export const adSlots: AdSlot[] = [
     ads: [
       {
         id: "article-after-2-1",
-        imageKey: "sample-banner",
+        imageKey: "sample-ad",
         url: "https://yourdailylocal.com/advertise",
+      },
+      {
+        id: "article-after-2-2",
+        imageKey: "sponsor-4",
       },
     ],
   },
@@ -72,8 +94,12 @@ export const adSlots: AdSlot[] = [
     ads: [
       {
         id: "article-after-5-1",
-        imageKey: "sample-banner",
+        imageKey: "sample-ad",
         url: "https://yourdailylocal.com/advertise",
+      },
+      {
+        id: "article-after-5-2",
+        imageKey: "sponsor-5",
       },
     ],
   },
@@ -83,8 +109,12 @@ export const adSlots: AdSlot[] = [
     ads: [
       {
         id: "article-bottom-1",
-        imageKey: "sample-banner",
+        imageKey: "sample-ad",
         url: "https://yourdailylocal.com/advertise",
+      },
+      {
+        id: "article-bottom-2",
+        imageKey: "sponsor-1",
       },
     ],
   },
