@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import {
@@ -20,6 +20,8 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
   const slot = getAdSlotByPlacement(placement);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  const hasLoggedInitialView = useRef(false);
+
   const ads = useMemo(() => slot?.ads ?? [], [slot?.ads]);
 
   useEffect(() => {
@@ -37,16 +39,41 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
   }
 
   const activeAd = ads[activeIndex];
+
   const imageSource = activeAd.imageKey
     ? localAdImages[activeAd.imageKey]
     : undefined;
 
+  useEffect(() => {
+    if (!activeAd) return;
+
+    if (!hasLoggedInitialView.current) {
+      hasLoggedInitialView.current = true;
+    }
+
+    console.log("Ad impression", {
+      placement,
+      adId: activeAd.id,
+      imageKey: activeAd.imageKey,
+      viewedAt: new Date().toISOString(),
+    });
+  }, [activeAd, placement]);
+
   const handlePress = async () => {
+    console.log("Ad clicked", {
+      placement,
+      adId: activeAd.id,
+      imageKey: activeAd.imageKey,
+      target: activeAd.url ?? activeAd.phone ?? null,
+      clickedAt: new Date().toISOString(),
+    });
+
     const target = activeAd.url ?? activeAd.phone;
 
     if (!target) return;
 
     const link = activeAd.phone ? `tel:${activeAd.phone}` : target;
+
     const canOpen = await Linking.canOpenURL(link);
 
     if (canOpen) {
