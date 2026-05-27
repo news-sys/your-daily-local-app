@@ -43,6 +43,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c538aed5-aaa4-47aa-a1bd-9a72c85035ce"
+      }
+    },
+    "owner": "newsydl"
   }
 }
