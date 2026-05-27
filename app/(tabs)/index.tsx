@@ -20,6 +20,10 @@ import type { Post } from "@/types/Post";
 
 const logo = require("@/assets/images/ydl-logo.png");
 
+function shouldShowAdAfterSection(section: HomeSection): boolean {
+  return section.id === "top-story" || section.id === "latest-news";
+}
+
 export default function HomeScreen() {
   const [sections, setSections] = useState<HomeSection[]>([]);
   const [breakingPosts, setBreakingPosts] = useState<Post[]>([]);
@@ -108,7 +112,7 @@ export default function HomeScreen() {
           </Pressable>
         ) : null}
 
-        {sections.map((section, index) => (
+        {sections.map((section) => (
           <View key={section.id}>
             {section.type === "ad" ? null : section.type === "lead" ? (
               <LeadSection section={section} />
@@ -116,7 +120,7 @@ export default function HomeScreen() {
               <ListSection section={section} />
             )}
 
-            {index < sections.length - 1 ? (
+            {shouldShowAdAfterSection(section) ? (
               <RotatingAdSlot placement="home-between-sections" />
             ) : null}
           </View>
