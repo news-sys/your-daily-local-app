@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import RotatingAdSlot from "@/components/RotatingAdSlot";
 import { getSavedPosts, toggleSavedPost } from "@/services/savedPosts";
 import type { PaginatedPosts, Post } from "@/types/Post";
 
@@ -39,7 +40,7 @@ function buildFeedItems(posts: Post[], showAds: boolean): FeedItem[] {
   posts.forEach((post, index) => {
     items.push({ type: "post", post });
 
-    if ((index + 1) % 3 === 0 && index !== posts.length - 1) {
+    if ((index + 1) % 4 === 0 && index !== posts.length - 1) {
       items.push({ type: "ad", id: `ad-${index}` });
     }
   });
@@ -185,7 +186,7 @@ export default function PostFeed({
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
         <StatusBar style="light" />
 
         <View style={styles.loadingContainer}>
@@ -197,7 +198,7 @@ export default function PostFeed({
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <StatusBar style="light" />
 
       <FlatList
@@ -246,7 +247,11 @@ export default function PostFeed({
         }
         ListEmptyComponent={
           <View style={styles.centerState}>
-            <Ionicons name="bookmark-outline" size={38} color="#999" />
+            <Ionicons
+              name={isSavedStoriesFeed ? "bookmark-outline" : "newspaper-outline"}
+              size={40}
+              color="#999"
+            />
 
             <Text style={styles.centerText}>{emptyMessage}</Text>
 
@@ -270,12 +275,7 @@ export default function PostFeed({
         }
         renderItem={({ item }) => {
           if (item.type === "ad") {
-            return (
-              <View style={styles.adBox}>
-                <Text style={styles.adLabel}>Advertisement</Text>
-                <Text style={styles.adText}>Your business could be here</Text>
-              </View>
-            );
+            return <RotatingAdSlot placement="home-between-sections" />;
           }
 
           const post = item.post;
@@ -299,7 +299,11 @@ export default function PostFeed({
                   transition={250}
                   cachePolicy="memory-disk"
                 />
-              ) : null}
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Ionicons name="newspaper-outline" size={34} color="#999" />
+                </View>
+              )}
 
               {!onRemovePost ? (
                 <Pressable
@@ -319,17 +323,19 @@ export default function PostFeed({
               ) : null}
 
               <View style={styles.cardBody}>
-                {post.category ? (
-                  <Text style={styles.category}>{post.category}</Text>
-                ) : null}
+                <View style={styles.metaRow}>
+                  {post.category ? (
+                    <Text style={styles.category}>{post.category}</Text>
+                  ) : null}
+
+                  {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+                </View>
 
                 <Text style={styles.title}>{post.title}</Text>
 
                 {post.excerpt ? (
                   <Text style={styles.excerpt}>{post.excerpt}</Text>
                 ) : null}
-
-                {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
 
                 {onRemovePost ? (
                   <Pressable
@@ -379,7 +385,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 16,
+    paddingBottom: 24,
   },
   emptyListContent: {
     flexGrow: 1,
@@ -396,7 +402,7 @@ const styles = StyleSheet.create({
   feedTitle: {
     color: "#666",
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "800",
     marginTop: 4,
     textTransform: "uppercase",
   },
@@ -444,68 +450,74 @@ const styles = StyleSheet.create({
   errorText: {
     color: "#8a1f1f",
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
     textAlign: "center",
   },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 18,
     marginBottom: 16,
     overflow: "hidden",
     position: "relative",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
   },
   image: {
     backgroundColor: "#ddd",
-    height: 190,
+    height: 210,
+    width: "100%",
+  },
+  imagePlaceholder: {
+    alignItems: "center",
+    backgroundColor: "#e9e9e9",
+    height: 150,
+    justifyContent: "center",
     width: "100%",
   },
   bookmarkButton: {
     alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.92)",
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
     borderRadius: 999,
-    height: 40,
+    height: 42,
     justifyContent: "center",
     position: "absolute",
     right: 12,
     top: 12,
-    width: 40,
+    width: 42,
     zIndex: 2,
   },
   cardBody: {
-    padding: 14,
+    padding: 15,
+  },
+  metaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 7,
   },
   category: {
     color: "#b00020",
+    flexShrink: 1,
     fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.6,
-    marginBottom: 6,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    marginRight: 10,
     textTransform: "uppercase",
+  },
+  date: {
+    color: "#888",
+    fontSize: 11,
+    fontWeight: "600",
   },
   title: {
     color: "#111",
-    fontSize: 19,
-    fontWeight: "800",
-    lineHeight: 24,
+    fontSize: 20,
+    fontWeight: "900",
+    lineHeight: 25,
   },
   excerpt: {
     color: "#555",
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
     marginTop: 8,
-  },
-  date: {
-    color: "#888",
-    fontSize: 12,
-    marginTop: 10,
   },
   removeButton: {
     alignItems: "center",
@@ -514,7 +526,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: "row",
-    marginTop: 12,
+    marginTop: 13,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
@@ -532,28 +544,5 @@ const styles = StyleSheet.create({
     color: "#666",
     fontSize: 13,
     marginTop: 8,
-  },
-  adBox: {
-    alignItems: "center",
-    backgroundColor: "#f3f3f3",
-    borderColor: "#ddd",
-    borderRadius: 14,
-    borderStyle: "dashed",
-    borderWidth: 1,
-    marginBottom: 16,
-    padding: 18,
-  },
-  adLabel: {
-    color: "#777",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.7,
-    marginBottom: 4,
-    textTransform: "uppercase",
-  },
-  adText: {
-    color: "#333",
-    fontSize: 15,
-    fontWeight: "700",
   },
 });

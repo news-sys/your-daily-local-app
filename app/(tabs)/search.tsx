@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useState } from "react";
@@ -13,12 +14,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { searchPosts } from "@/services/providers/mockProvider";
+import { searchPosts } from "@/services/api";
 import type { Post } from "@/types/Post";
 
 export default function SearchScreen() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Post[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSearch = useCallback(async () => {
@@ -26,11 +28,14 @@ export default function SearchScreen() {
 
     if (!trimmedQuery) {
       setResults([]);
+      setHasSearched(false);
       return;
     }
 
     try {
       setIsLoading(true);
+      setHasSearched(true);
+
       const response = await searchPosts(trimmedQuery);
       setResults(response.posts);
     } finally {
@@ -39,7 +44,7 @@ export default function SearchScreen() {
   }, [query]);
 
   return (
-    <SafeAreaView style={styles.safeArea}edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <StatusBar style="light" />
 
       <View style={styles.container}>
@@ -64,6 +69,7 @@ export default function SearchScreen() {
         {isLoading ? (
           <View style={styles.centerState}>
             <ActivityIndicator size="large" />
+            <Text style={styles.emptyText}>Searching stories...</Text>
           </View>
         ) : (
           <FlatList
@@ -76,10 +82,12 @@ export default function SearchScreen() {
             }
             ListEmptyComponent={
               <View style={styles.centerState}>
-                <Ionicons name="search-outline" size={40} color="#999" />
+                <Ionicons name="search-outline" size={42} color="#999" />
 
                 <Text style={styles.emptyText}>
-                  Search for local news, sports, and breaking stories.
+                  {hasSearched
+                    ? "No stories matched your search."
+                    : "Search for local news, sports, and breaking stories."}
                 </Text>
               </View>
             }
@@ -93,12 +101,24 @@ export default function SearchScreen() {
                   })
                 }
               >
-                <Text style={styles.category}>{item.category}</Text>
-                <Text style={styles.resultTitle}>{item.title}</Text>
-
-                {item.excerpt ? (
-                  <Text style={styles.excerpt}>{item.excerpt}</Text>
+                {item.image ? (
+                  <Image
+                    source={{ uri: item.image }}
+                    style={styles.resultImage}
+                    contentFit="cover"
+                    transition={250}
+                    cachePolicy="memory-disk"
+                  />
                 ) : null}
+
+                <View style={styles.resultBody}>
+                  <Text style={styles.category}>{item.category}</Text>
+                  <Text style={styles.resultTitle}>{item.title}</Text>
+
+                  {item.excerpt ? (
+                    <Text style={styles.excerpt}>{item.excerpt}</Text>
+                  ) : null}
+                </View>
               </Pressable>
             )}
           />
@@ -154,27 +174,35 @@ const styles = StyleSheet.create({
   },
   resultCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    marginBottom: 14,
-    padding: 16,
+    borderRadius: 18,
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  resultImage: {
+    backgroundColor: "#ddd",
+    height: 170,
+    width: "100%",
+  },
+  resultBody: {
+    padding: 15,
   },
   category: {
     color: "#b00020",
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "900",
     marginBottom: 6,
     textTransform: "uppercase",
   },
   resultTitle: {
     color: "#111",
-    fontSize: 18,
-    fontWeight: "800",
-    lineHeight: 24,
+    fontSize: 20,
+    fontWeight: "900",
+    lineHeight: 25,
   },
   excerpt: {
     color: "#555",
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
     marginTop: 8,
   },
   centerState: {
@@ -191,7 +219,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     marginTop: 10,
-    maxWidth: 260,
+    maxWidth: 270,
     textAlign: "center",
   },
 });
