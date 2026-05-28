@@ -59,7 +59,25 @@ type WordPressPost = {
 };
 
 function stripHtml(html = ""): string {
-  return html
+  let processed = html;
+
+  processed = processed.replace(
+    /<iframe[^>]*src=["']https?:\/\/(?:www\.)?youtube\.com\/embed\/([^"']+)["'][^>]*><\/iframe>/gi,
+    (_, videoId) => {
+      const cleanId = String(videoId).split("?")[0];
+      return `\nhttps://www.youtube.com/watch?v=${cleanId}\n`;
+    }
+  );
+
+  processed = processed.replace(
+    /(https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/live\/|youtube\.com\/shorts\/)[^\s<]+)/gi,
+    "\n$1\n"
+  );
+
+  processed = processed
+    .replace(/<!--more-->/gi, "\n\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&#8217;/g, "'")
@@ -67,8 +85,11 @@ function stripHtml(html = ""): string {
     .replace(/&#8221;/g, '"')
     .replace(/&#8211;/g, "–")
     .replace(/&#8212;/g, "—")
-    .replace(/&amp;/g, "&")
-    .trim();
+    .replace(/&#038;/g, "&")
+    .replace(/&#039;/g, "'")
+    .replace(/&amp;/g, "&");
+
+  return processed.trim();
 }
 
 function isPostWithinHours(post: Post, hours: number): boolean {

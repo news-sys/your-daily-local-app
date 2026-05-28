@@ -2,9 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   Share,
@@ -13,19 +14,62 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { WebView } from "react-native-webview";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
 import { getPostById, getPostsByCategory } from "@/services/api";
 import { isPostSaved, toggleSavedPost } from "@/services/savedPosts";
 import type { Post } from "@/types/Post";
 
-function formatArticleBody(body?: string): string[] {
+type ArticleBlock =
+  | { type: "paragraph"; text: string }
+  | { type: "youtube"; videoId: string; originalUrl: string };
+
+function getYouTubeVideoId(text: string): string | null {
+  const trimmed = text.trim();
+
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtu\.be\/)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtube\.com\/live\/)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{6,})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = trimmed.match(pattern);
+
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function formatArticleBlocks(body?: string): ArticleBlock[] {
   if (!body) return [];
 
   return body
     .split(/\n{1,}|\r\n{1,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => {
+      const videoId = getYouTubeVideoId(block);
+
+      if (videoId) {
+        return {
+          type: "youtube",
+          videoId,
+          originalUrl: block,
+        };
+      }
+
+      return {
+        type: "paragraph",
+        text: block,
+      };
+    });
 }
 
 function formatDisplayDate(date?: string): string {
@@ -41,6 +85,121 @@ function formatDisplayDate(date?: string): string {
   }
 }
 
+const YouTubeEmbed = memo(function YouTubeEmbed({
+  videoId,
+  originalUrl,
+}: {
+  videoId: string;
+  originalUrl: string;
+}) {
+  const embedUrl = useMemo(
+    () =>
+      `https://www.youtube.com/embed/${videoId}?playsinline=1&rel=0&modestbranding=1`,
+    [videoId]
+  );
+
+  const openInYouTube = useCallback(() => {
+    Linking.openURL(originalUrl);
+  }, [originalUrl]);
+
+  return (
+    <View style={styles.youtubeContainer}>
+      <View style={styles.youtubeWrapper}>
+        <WebView
+          source={{
+            uri: embedUrl,
+            headers: {
+              Referer: "https://yourdailylocal.com",
+            },
+          }}
+          style={styles.youtubeWebView}
+          allowsFullscreenVideo
+          allowsInlineMediaPlayback
+          javaScriptEnabled
+          domStorageEnabled
+          mediaPlaybackRequiresUserAction
+          originWhitelist={["*"]}
+          scrollEnabled={false}
+          setSupportMultipleWindows={false}
+        />
+      </View>
+
+      <Pressable style={styles.youtubeFallbackButton} onPress={openInYouTube}>
+        <Ionicons name="logo-youtube" size={18} color="#fff" />
+        <Text style={styles.youtubeFallbackText}>Open video on YouTube</Text>
+      </Pressable>
+    </View>
+  );
+});
+
+const RelatedStoryCard = memo(function RelatedStoryCard({
+  post,
+}: {
+  post: Post;
+}) {
+  const openStory = useCallback(() => {
+    router.push({
+      pathname: "/(tabs)/article",
+      params: { id: String(post.id) },
+    });
+  }, [post.id]);
+
+  return (
+    <Pressable style={styles.relatedCard} onPress={openStory}>
+      {post.image ? (
+        <Image
+          source={{ uri: post.image }}
+          style={styles.relatedImage}
+          contentFit="cover"
+          transition={150}
+          cachePolicy="memory-disk"
+        />
+      ) : null}
+
+      <View style={styles.relatedContent}>
+        <Text style={styles.relatedCategory}>{post.category}</Text>
+        <Text style={styles.relatedHeadline}>{post.title}</Text>
+      </View>
+    </Pressable>
+  );
+});
+
+const ArticleContentBlock = memo(function ArticleContentBlock({
+  block,
+  index,
+  totalBlocks,
+}: {
+  block: ArticleBlock;
+  index: number;
+  totalBlocks: number;
+}) {
+  const isAfterSecondBlock = index === 1;
+  const isAfterFifthBlock = index === 4;
+  const isAfterLastBlock = index === totalBlocks - 1;
+
+  return (
+    <View>
+      {block.type === "youtube" ? (
+        <YouTubeEmbed videoId={block.videoId} originalUrl={block.originalUrl} />
+      ) : (
+        <Text style={styles.body}>{block.text}</Text>
+      )}
+
+      {isAfterSecondBlock ? (
+        <RotatingAdSlot placement="article-after-2" />
+      ) : null}
+
+      {isAfterFifthBlock ? (
+        <RotatingAdSlot placement="article-after-5" />
+      ) : null}
+
+      {isAfterLastBlock ? (
+        <RotatingAdSlot placement="article-bottom" />
+      ) : null}
+    </View>
+  );
+});
+
 export default function ArticleScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = params.id;
@@ -49,9 +208,10 @@ export default function ArticleScreen() {
   const [relatedPosts, setRelatedPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const bodyParagraphs = useMemo(
-    () => formatArticleBody(post?.body),
+  const articleBlocks = useMemo(
+    () => formatArticleBlocks(post?.body),
     [post?.body]
   );
 
@@ -62,17 +222,23 @@ export default function ArticleScreen() {
     }
 
     try {
+      setIsLoading(true);
+
       const result = await getPostById(id);
 
       setPost(result);
 
       if (result) {
-        const saved = await isPostSaved(result.id);
+        const [saved, related] = await Promise.all([
+          isPostSaved(result.id),
+          result.category
+            ? getPostsByCategory(result.category)
+            : Promise.resolve(null),
+        ]);
+
         setIsSaved(saved);
 
-        if (result.category) {
-          const related = await getPostsByCategory(result.category);
-
+        if (related) {
           setRelatedPosts(
             related.posts
               .filter((relatedPost) => relatedPost.id !== result.id)
@@ -89,7 +255,7 @@ export default function ArticleScreen() {
     loadPost();
   }, [loadPost]);
 
-  const shareArticle = async () => {
+  const shareArticle = useCallback(async () => {
     if (!post) return;
 
     try {
@@ -100,14 +266,23 @@ export default function ArticleScreen() {
     } catch {
       // Share canceled
     }
-  };
+  }, [post]);
 
-  const handleToggleSaved = async () => {
-    if (!post) return;
+  const handleToggleSaved = useCallback(async () => {
+    if (!post || isSaving) return;
 
-    const nextSavedState = await toggleSavedPost(post);
-    setIsSaved(nextSavedState);
-  };
+    try {
+      setIsSaving(true);
+      const nextSavedState = await toggleSavedPost(post);
+      setIsSaved(nextSavedState);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [post, isSaving]);
+
+  const goBack = useCallback(() => {
+    router.back();
+  }, []);
 
   if (isLoading) {
     return (
@@ -129,15 +304,9 @@ export default function ArticleScreen() {
 
         <View style={styles.loadingContainer}>
           <Text style={styles.notFoundTitle}>Story not found</Text>
+          <Text style={styles.centerText}>This story could not be loaded.</Text>
 
-          <Text style={styles.centerText}>
-            This story could not be loaded.
-          </Text>
-
-          <Pressable
-            style={styles.backButtonLarge}
-            onPress={() => router.back()}
-          >
+          <Pressable style={styles.backButtonLarge} onPress={goBack}>
             <Text style={styles.backButtonLargeText}>Go Back</Text>
           </Pressable>
         </View>
@@ -160,16 +329,13 @@ export default function ArticleScreen() {
           headerRight: () => (
             <View style={styles.headerActions}>
               <Pressable onPress={shareArticle} style={styles.headerIconButton}>
-                <Ionicons
-                  name="share-social-outline"
-                  size={22}
-                  color="#fff"
-                />
+                <Ionicons name="share-social-outline" size={22} color="#fff" />
               </Pressable>
 
               <Pressable
                 onPress={handleToggleSaved}
                 style={styles.headerIconButton}
+                disabled={isSaving}
               >
                 <Ionicons
                   name={isSaved ? "bookmark" : "bookmark-outline"}
@@ -185,6 +351,7 @@ export default function ArticleScreen() {
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
+        removeClippedSubviews
       >
         {post.image ? (
           <View>
@@ -219,33 +386,15 @@ export default function ArticleScreen() {
 
           <RotatingAdSlot placement="article-top" />
 
-          {bodyParagraphs.length > 0 ? (
-            <>
-              {bodyParagraphs.map((paragraph, index) => {
-                const isAfterSecondParagraph = index === 1;
-                const isAfterFifthParagraph = index === 4;
-                const isAfterLastParagraph =
-                  index === bodyParagraphs.length - 1;
-
-                return (
-                  <View key={`${index}-${paragraph.slice(0, 20)}`}>
-                    <Text style={styles.body}>{paragraph}</Text>
-
-                    {isAfterSecondParagraph ? (
-                      <RotatingAdSlot placement="article-after-2" />
-                    ) : null}
-
-                    {isAfterFifthParagraph ? (
-                      <RotatingAdSlot placement="article-after-5" />
-                    ) : null}
-
-                    {isAfterLastParagraph ? (
-                      <RotatingAdSlot placement="article-bottom" />
-                    ) : null}
-                  </View>
-                );
-              })}
-            </>
+          {articleBlocks.length > 0 ? (
+            articleBlocks.map((block, index) => (
+              <ArticleContentBlock
+                key={`${block.type}-${index}`}
+                block={block}
+                index={index}
+                totalBlocks={articleBlocks.length}
+              />
+            ))
           ) : (
             <Text style={styles.body}>No article text available.</Text>
           )}
@@ -255,34 +404,10 @@ export default function ArticleScreen() {
               <Text style={styles.relatedTitle}>Related Stories</Text>
 
               {relatedPosts.map((relatedPost) => (
-                <Pressable
+                <RelatedStoryCard
                   key={String(relatedPost.id)}
-                  style={styles.relatedCard}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/(tabs)/article",
-                      params: { id: String(relatedPost.id) },
-                    })
-                  }
-                >
-                  {relatedPost.image ? (
-                    <Image
-                      source={{ uri: relatedPost.image }}
-                      style={styles.relatedImage}
-                      contentFit="cover"
-                    />
-                  ) : null}
-
-                  <View style={styles.relatedContent}>
-                    <Text style={styles.relatedCategory}>
-                      {relatedPost.category}
-                    </Text>
-
-                    <Text style={styles.relatedHeadline}>
-                      {relatedPost.title}
-                    </Text>
-                  </View>
-                </Pressable>
+                  post={relatedPost}
+                />
               ))}
             </View>
           ) : null}
@@ -294,6 +419,7 @@ export default function ArticleScreen() {
                 isSaved ? styles.savedButton : styles.unsavedButton,
               ]}
               onPress={handleToggleSaved}
+              disabled={isSaving}
             >
               <Ionicons
                 name={isSaved ? "bookmark" : "bookmark-outline"}
@@ -308,7 +434,6 @@ export default function ArticleScreen() {
 
             <Pressable style={styles.shareButton} onPress={shareArticle}>
               <Ionicons name="share-social-outline" size={18} color="#fff" />
-
               <Text style={styles.actionButtonText}>Share</Text>
             </Pressable>
           </View>
@@ -391,7 +516,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
-    marginTop: 0,
     padding: 22,
   },
   metaRow: {
@@ -430,6 +554,36 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 31,
     marginBottom: 24,
+  },
+  youtubeContainer: {
+    marginBottom: 24,
+  },
+  youtubeWrapper: {
+    aspectRatio: 16 / 9,
+    backgroundColor: "#000",
+    borderRadius: 16,
+    overflow: "hidden",
+    width: "100%",
+  },
+  youtubeWebView: {
+    backgroundColor: "#000",
+    flex: 1,
+  },
+  youtubeFallbackButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#b00020",
+    borderRadius: 999,
+    flexDirection: "row",
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  youtubeFallbackText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 7,
   },
   relatedSection: {
     marginTop: 16,
