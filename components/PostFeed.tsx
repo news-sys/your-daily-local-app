@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -47,6 +47,117 @@ function buildFeedItems(posts: Post[], showAds: boolean): FeedItem[] {
 
   return items;
 }
+
+type FeedPostCardProps = {
+  post: Post;
+  isSaved: boolean;
+  isSaving: boolean;
+  isRemoving: boolean;
+  showBookmarkButton: boolean;
+  removePostLabel: string;
+  onToggleSavedPost: (post: Post) => Promise<void>;
+  onRemovePost?: (post: Post) => Promise<void>;
+};
+
+const FeedAdSlot = memo(function FeedAdSlot() {
+  return <RotatingAdSlot placement="home-between-sections" />;
+});
+
+const FeedPostCard = memo(function FeedPostCard({
+  post,
+  isSaved,
+  isSaving,
+  isRemoving,
+  showBookmarkButton,
+  removePostLabel,
+  onToggleSavedPost,
+  onRemovePost,
+}: FeedPostCardProps) {
+  const openArticle = useCallback(() => {
+    router.push({
+      pathname: "/(tabs)/article",
+      params: { id: String(post.id) },
+    });
+  }, [post.id]);
+
+  const handleBookmarkPress = useCallback(
+    (event: { stopPropagation: () => void }) => {
+      event.stopPropagation();
+      onToggleSavedPost(post);
+    },
+    [onToggleSavedPost, post]
+  );
+
+  const handleRemovePress = useCallback(
+    (event: { stopPropagation: () => void }) => {
+      event.stopPropagation();
+
+      if (onRemovePost) {
+        onRemovePost(post);
+      }
+    },
+    [onRemovePost, post]
+  );
+
+  return (
+    <Pressable style={styles.card} onPress={openArticle}>
+      {post.image ? (
+        <Image
+          source={{ uri: post.image }}
+          style={styles.image}
+          contentFit="cover"
+          transition={200}
+          cachePolicy="memory-disk"
+        />
+      ) : (
+        <View style={styles.imagePlaceholder}>
+          <Ionicons name="newspaper-outline" size={34} color="#999" />
+        </View>
+      )}
+
+      {showBookmarkButton ? (
+        <Pressable
+          style={styles.bookmarkButton}
+          disabled={isSaving}
+          onPress={handleBookmarkPress}
+        >
+          <Ionicons
+            name={isSaved ? "bookmark" : "bookmark-outline"}
+            size={22}
+            color={isSaved ? "#b00020" : "#111"}
+          />
+        </Pressable>
+      ) : null}
+
+      <View style={styles.cardBody}>
+        <View style={styles.metaRow}>
+          {post.category ? (
+            <Text style={styles.category}>{post.category}</Text>
+          ) : null}
+
+          {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+        </View>
+
+        <Text style={styles.title}>{post.title}</Text>
+
+        {post.excerpt ? <Text style={styles.excerpt}>{post.excerpt}</Text> : null}
+
+        {onRemovePost ? (
+          <Pressable
+            style={styles.removeButton}
+            disabled={isRemoving}
+            onPress={handleRemovePress}
+          >
+            <Ionicons name="bookmark" size={16} color="#b00020" />
+            <Text style={styles.removeButtonText}>
+              {isRemoving ? "Removing..." : removePostLabel}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+});
 
 export default function PostFeed({
   fetchPosts,
@@ -182,7 +293,102 @@ export default function PostFeed({
     }, [reloadOnFocus, loadFirstPage, refreshSavedPostIds])
   );
 
-  const feedItems = buildFeedItems(posts, showAds);
+  const feedItems = useMemo(
+    () => buildFeedItems(posts, showAds),
+    [posts, showAds]
+  );
+
+  const keyExtractor = useCallback((item: FeedItem) => {
+    return item.type === "post" ? String(item.post.id) : item.id;
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: FeedItem }) => {
+      if (item.type === "ad") {
+        return <FeedAdSlot />;
+      }
+
+      const post = item.post;
+
+      return (
+        <FeedPostCard
+          post={post}
+          isSaved={savedPostIds.includes(post.id)}
+          isSaving={savingPostId === post.id}
+          isRemoving={removingPostId === post.id}
+          showBookmarkButton={!onRemovePost}
+          removePostLabel={removePostLabel}
+          onToggleSavedPost={handleToggleSavedPost}
+          onRemovePost={onRemovePost ? handleRemovePost : undefined}
+        />
+      );
+    },
+    [
+      savedPostIds,
+      savingPostId,
+      removingPostId,
+      onRemovePost,
+      removePostLabel,
+      handleToggleSavedPost,
+      handleRemovePost,
+    ]
+  );
+
+  const renderHeader = useCallback(
+    () => (
+      <>
+        <View style={styles.header}>
+          <Text style={styles.logoText}>Your Daily Local</Text>
+          <Text style={styles.feedTitle}>{title}</Text>
+        </View>
+
+        {errorMessage ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+      </>
+    ),
+    [title, errorMessage]
+  );
+
+  const renderFooter = useCallback(() => {
+    if (!isLoadingMore) return null;
+
+    return (
+      <View style={styles.footerLoader}>
+        <ActivityIndicator />
+        <Text style={styles.footerText}>Loading more stories...</Text>
+      </View>
+    );
+  }, [isLoadingMore]);
+
+  const renderEmpty = useCallback(
+    () => (
+      <View style={styles.centerState}>
+        <Ionicons
+          name={isSavedStoriesFeed ? "bookmark-outline" : "newspaper-outline"}
+          size={40}
+          color="#999"
+        />
+
+        <Text style={styles.centerText}>{emptyMessage}</Text>
+
+        {isSavedStoriesFeed ? (
+          <>
+            <Text style={styles.emptySubtext}>
+              Browse stories and tap the bookmark icon to save them here.
+            </Text>
+
+            <Pressable style={styles.browseButton} onPress={() => router.push("/")}>
+              <Text style={styles.browseButtonText}>Browse Latest Stories</Text>
+            </Pressable>
+          </>
+        ) : null}
+      </View>
+    ),
+    [emptyMessage, isSavedStoriesFeed]
+  );
 
   if (isLoading) {
     return (
@@ -204,9 +410,7 @@ export default function PostFeed({
       <FlatList
         style={styles.container}
         data={feedItems}
-        keyExtractor={(item) =>
-          item.type === "post" ? String(item.post.id) : item.id
-        }
+        keyExtractor={keyExtractor}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
@@ -214,150 +418,21 @@ export default function PostFeed({
           />
         }
         onEndReached={loadMore}
-        onEndReachedThreshold={0.6}
+        onEndReachedThreshold={0.45}
         contentContainerStyle={[
           styles.listContent,
           feedItems.length === 0 && styles.emptyListContent,
         ]}
         initialNumToRender={5}
         maxToRenderPerBatch={5}
+        updateCellsBatchingPeriod={50}
         windowSize={7}
         removeClippedSubviews
-        ListHeaderComponent={
-          <>
-            <View style={styles.header}>
-              <Text style={styles.logoText}>Your Daily Local</Text>
-              <Text style={styles.feedTitle}>{title}</Text>
-            </View>
-
-            {errorMessage ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{errorMessage}</Text>
-              </View>
-            ) : null}
-          </>
-        }
-        ListFooterComponent={
-          isLoadingMore ? (
-            <View style={styles.footerLoader}>
-              <ActivityIndicator />
-              <Text style={styles.footerText}>Loading more stories...</Text>
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          <View style={styles.centerState}>
-            <Ionicons
-              name={isSavedStoriesFeed ? "bookmark-outline" : "newspaper-outline"}
-              size={40}
-              color="#999"
-            />
-
-            <Text style={styles.centerText}>{emptyMessage}</Text>
-
-            {isSavedStoriesFeed ? (
-              <>
-                <Text style={styles.emptySubtext}>
-                  Browse stories and tap the bookmark icon to save them here.
-                </Text>
-
-                <Pressable
-                  style={styles.browseButton}
-                  onPress={() => router.push("/")}
-                >
-                  <Text style={styles.browseButtonText}>
-                    Browse Latest Stories
-                  </Text>
-                </Pressable>
-              </>
-            ) : null}
-          </View>
-        }
-        renderItem={({ item }) => {
-          if (item.type === "ad") {
-            return <RotatingAdSlot placement="home-between-sections" />;
-          }
-
-          const post = item.post;
-          const isSaved = savedPostIds.includes(post.id);
-
-          return (
-            <Pressable
-              style={styles.card}
-              onPress={() =>
-                router.push({
-                  pathname: "/(tabs)/article",
-                  params: { id: String(post.id) },
-                })
-              }
-            >
-              {post.image ? (
-                <Image
-                  source={{ uri: post.image }}
-                  style={styles.image}
-                  contentFit="cover"
-                  transition={250}
-                  cachePolicy="memory-disk"
-                />
-              ) : (
-                <View style={styles.imagePlaceholder}>
-                  <Ionicons name="newspaper-outline" size={34} color="#999" />
-                </View>
-              )}
-
-              {!onRemovePost ? (
-                <Pressable
-                  style={styles.bookmarkButton}
-                  disabled={savingPostId === post.id}
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    handleToggleSavedPost(post);
-                  }}
-                >
-                  <Ionicons
-                    name={isSaved ? "bookmark" : "bookmark-outline"}
-                    size={22}
-                    color={isSaved ? "#b00020" : "#111"}
-                  />
-                </Pressable>
-              ) : null}
-
-              <View style={styles.cardBody}>
-                <View style={styles.metaRow}>
-                  {post.category ? (
-                    <Text style={styles.category}>{post.category}</Text>
-                  ) : null}
-
-                  {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
-                </View>
-
-                <Text style={styles.title}>{post.title}</Text>
-
-                {post.excerpt ? (
-                  <Text style={styles.excerpt}>{post.excerpt}</Text>
-                ) : null}
-
-                {onRemovePost ? (
-                  <Pressable
-                    style={styles.removeButton}
-                    disabled={removingPostId === post.id}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      handleRemovePost(post);
-                    }}
-                  >
-                    <Ionicons name="bookmark" size={16} color="#b00020" />
-                    <Text style={styles.removeButtonText}>
-                      {removingPostId === post.id
-                        ? "Removing..."
-                        : removePostLabel}
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            </Pressable>
-          );
-        }}
+        ListHeaderComponent={renderHeader}
+        ListFooterComponent={renderFooter}
+        ListEmptyComponent={renderEmpty}
+        renderItem={renderItem}
+        showsVerticalScrollIndicator={false}
       />
     </SafeAreaView>
   );
