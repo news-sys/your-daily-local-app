@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import {
@@ -7,6 +7,7 @@ import {
     type AdPlacement,
     type LocalAdImageKey,
 } from "@/data/adSlots";
+import { trackAdImpression, trackEvent } from "@/services/analytics";
 
 const localAdImages: Partial<Record<LocalAdImageKey, number>> = {
   "sample-ad": require("../assets/images/ads/sample-banner.jpg"),
@@ -19,8 +20,7 @@ type RotatingAdSlotProps = {
 export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
   const slot = getAdSlotByPlacement(placement);
   const [activeIndex, setActiveIndex] = useState(0);
-
-  const hasLoggedInitialView = useRef(false);
+  const loggedImpressionKeys = useRef<Set<string>>(new Set());
 
   const ads = useMemo(() => slot?.ads ?? [], [slot?.ads]);
 
@@ -34,22 +34,24 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
     return () => clearInterval(interval);
   }, [ads.length, slot]);
 
-  if (!slot || ads.length === 0) {
-    return null;
-  }
-
   const activeAd = ads[activeIndex];
 
-  const imageSource = activeAd.imageKey
+  const imageSource = activeAd?.imageKey
     ? localAdImages[activeAd.imageKey]
     : undefined;
 
   useEffect(() => {
     if (!activeAd) return;
 
-    if (!hasLoggedInitialView.current) {
-      hasLoggedInitialView.current = true;
+    const impressionKey = `${placement}-${activeAd.id}`;
+
+    if (loggedImpressionKeys.current.has(impressionKey)) {
+      return;
     }
+
+    loggedImpressionKeys.current.add(impressionKey);
+
+    trackAdImpression(placement, activeAd.id);
 
     console.log("Ad impression", {
       placement,
@@ -59,7 +61,16 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
     });
   }, [activeAd, placement]);
 
-  const handlePress = async () => {
+  const handlePress = useCallback(async () => {
+    if (!activeAd) return;
+
+    trackEvent("ad_impression", {
+      placement,
+      advertiser: activeAd.id,
+      action: "click",
+      target: activeAd.url ?? activeAd.phone ?? null,
+    });
+
     console.log("Ad clicked", {
       placement,
       adId: activeAd.id,
@@ -79,7 +90,11 @@ export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
     if (canOpen) {
       await Linking.openURL(link);
     }
-  };
+  }, [activeAd, placement]);
+
+  if (!slot || ads.length === 0 || !activeAd) {
+    return null;
+  }
 
   return (
     <View style={styles.wrapper}>

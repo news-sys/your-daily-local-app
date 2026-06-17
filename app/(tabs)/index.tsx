@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
+import { trackEvent, trackScreenView } from "@/services/analytics";
 import { getBreakingPosts, getHomepageSections } from "@/services/api";
 import type { HomeSection } from "@/types/HomeSection";
 import type { Post } from "@/types/Post";
@@ -30,6 +31,8 @@ export default function HomeScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const hasTrackedScreenView = useRef(false);
 
   const loadHome = useCallback(async (refreshing = false) => {
     try {
@@ -52,8 +55,22 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
+    if (!hasTrackedScreenView.current) {
+      trackScreenView("home");
+      hasTrackedScreenView.current = true;
+    }
+
     loadHome();
   }, [loadHome]);
+
+  const openBreakingFeed = useCallback(() => {
+    trackEvent("screen_view", {
+      screenName: "home_breaking_bar_tap",
+      destination: "breaking",
+    });
+
+    router.push("/breaking");
+  }, []);
 
   if (isLoading) {
     return (
@@ -100,10 +117,7 @@ export default function HomeScreen() {
 
         {breakingPosts.length > 0 &&
         breakingPosts[0]?.category === "Breaking" ? (
-          <Pressable
-            style={styles.breakingBar}
-            onPress={() => router.push("/breaking")}
-          >
+          <Pressable style={styles.breakingBar} onPress={openBreakingFeed}>
             <Text style={styles.breakingLabel}>Breaking</Text>
 
             <Text style={styles.breakingText} numberOfLines={1}>
@@ -133,21 +147,30 @@ export default function HomeScreen() {
 function LeadSection({ section }: { section: HomeSection }) {
   const leadStory = section.posts[0];
 
+  const openLeadStory = useCallback(() => {
+    if (!leadStory) return;
+
+    trackEvent("article_open", {
+      source: "home_lead_section",
+      sectionId: section.id,
+      sectionTitle: section.title,
+      postId: leadStory.id,
+      title: leadStory.title,
+    });
+
+    router.push({
+      pathname: "/(tabs)/article",
+      params: { id: String(leadStory.id) },
+    });
+  }, [leadStory, section.id, section.title]);
+
   if (!leadStory) return null;
 
   return (
     <>
       <Text style={styles.mainSectionTitle}>{section.title}</Text>
 
-      <Pressable
-        style={styles.leadCard}
-        onPress={() =>
-          router.push({
-            pathname: "/(tabs)/article",
-            params: { id: String(leadStory.id) },
-          })
-        }
-      >
+      <Pressable style={styles.leadCard} onPress={openLeadStory}>
         {leadStory.image ? (
           <Image source={{ uri: leadStory.image }} style={styles.leadImage} />
         ) : null}
@@ -165,6 +188,38 @@ function LeadSection({ section }: { section: HomeSection }) {
 }
 
 function ListSection({ section }: { section: HomeSection }) {
+  const openSection = useCallback(() => {
+    trackEvent("screen_view", {
+      screenName: "home_view_all_tap",
+      sectionId: section.id,
+      sectionTitle: section.title,
+      destination: section.slug,
+    });
+
+    router.push({
+      pathname: "/(tabs)/category/[slug]",
+      params: { slug: section.slug },
+    });
+  }, [section.id, section.slug, section.title]);
+
+  const openStory = useCallback(
+    (post: Post) => {
+      trackEvent("article_open", {
+        source: "home_list_section",
+        sectionId: section.id,
+        sectionTitle: section.title,
+        postId: post.id,
+        title: post.title,
+      });
+
+      router.push({
+        pathname: "/(tabs)/article",
+        params: { id: String(post.id) },
+      });
+    },
+    [section.id, section.title]
+  );
+
   if (section.posts.length === 0) return null;
 
   return (
@@ -172,14 +227,7 @@ function ListSection({ section }: { section: HomeSection }) {
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>{section.title}</Text>
 
-        <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/(tabs)/category/[slug]",
-              params: { slug: section.slug },
-            })
-          }
-        >
+        <Pressable onPress={openSection}>
           <Text style={styles.viewAllText}>View All</Text>
         </Pressable>
       </View>
@@ -188,12 +236,7 @@ function ListSection({ section }: { section: HomeSection }) {
         <Pressable
           key={String(post.id)}
           style={styles.storyRow}
-          onPress={() =>
-            router.push({
-              pathname: "/(tabs)/article",
-              params: { id: String(post.id) },
-            })
-          }
+          onPress={() => openStory(post)}
         >
           {post.image ? (
             <Image source={{ uri: post.image }} style={styles.thumbnail} />

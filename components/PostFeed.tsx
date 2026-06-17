@@ -15,11 +15,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
+import { trackEvent, trackScreenView } from "@/services/analytics";
 import { getSavedPosts, toggleSavedPost } from "@/services/savedPosts";
 import type { PaginatedPosts, Post } from "@/types/Post";
 
 type PostFeedProps = {
   fetchPosts: (page?: number) => Promise<PaginatedPosts>;
+  analyticsScreenName?: string;
   title?: string;
   emptyMessage?: string;
   showAds?: boolean;
@@ -55,6 +57,7 @@ type FeedPostCardProps = {
   isRemoving: boolean;
   showBookmarkButton: boolean;
   removePostLabel: string;
+  analyticsScreenName?: string;
   onToggleSavedPost: (post: Post) => Promise<void>;
   onRemovePost?: (post: Post) => Promise<void>;
 };
@@ -70,15 +73,22 @@ const FeedPostCard = memo(function FeedPostCard({
   isRemoving,
   showBookmarkButton,
   removePostLabel,
+  analyticsScreenName,
   onToggleSavedPost,
   onRemovePost,
 }: FeedPostCardProps) {
   const openArticle = useCallback(() => {
+    trackEvent("article_open", {
+      source: analyticsScreenName ?? "feed",
+      postId: post.id,
+      title: post.title,
+    });
+
     router.push({
       pathname: "/(tabs)/article",
       params: { id: String(post.id) },
     });
-  }, [post.id]);
+  }, [analyticsScreenName, post.id, post.title]);
 
   const handleBookmarkPress = useCallback(
     (event: { stopPropagation: () => void }) => {
@@ -161,6 +171,7 @@ const FeedPostCard = memo(function FeedPostCard({
 
 export default function PostFeed({
   fetchPosts,
+  analyticsScreenName,
   title = "Your Daily Local",
   emptyMessage = "No stories available.",
   showAds = true,
@@ -181,6 +192,12 @@ export default function PostFeed({
 
   const isSavedStoriesFeed = title === "Saved Stories";
 
+  useEffect(() => {
+    if (!analyticsScreenName) return;
+
+    trackScreenView(analyticsScreenName);
+  }, [analyticsScreenName]);
+
   const refreshSavedPostIds = useCallback(async () => {
     const savedPosts = await getSavedPosts();
     setSavedPostIds(savedPosts.map((post) => post.id));
@@ -191,6 +208,13 @@ export default function PostFeed({
       try {
         refreshing ? setIsRefreshing(true) : setIsLoading(true);
         setErrorMessage(null);
+
+        if (refreshing && analyticsScreenName) {
+          trackEvent("screen_view", {
+            screenName: analyticsScreenName,
+            action: "refresh",
+          });
+        }
 
         const [result] = await Promise.all([
           fetchPosts(1),
@@ -207,7 +231,7 @@ export default function PostFeed({
         setIsRefreshing(false);
       }
     },
-    [fetchPosts, refreshSavedPostIds]
+    [analyticsScreenName, fetchPosts, refreshSavedPostIds]
   );
 
   const loadMore = useCallback(async () => {
@@ -217,6 +241,14 @@ export default function PostFeed({
 
     try {
       setIsLoadingMore(true);
+
+      if (analyticsScreenName) {
+        trackEvent("screen_view", {
+          screenName: analyticsScreenName,
+          action: "load_more",
+          page: nextPage,
+        });
+      }
 
       const result = await fetchPosts(nextPage);
 
@@ -228,7 +260,15 @@ export default function PostFeed({
     } finally {
       setIsLoadingMore(false);
     }
-  }, [fetchPosts, hasMore, nextPage, isLoadingMore, isLoading, isRefreshing]);
+  }, [
+    analyticsScreenName,
+    fetchPosts,
+    hasMore,
+    nextPage,
+    isLoadingMore,
+    isLoading,
+    isRefreshing,
+  ]);
 
   const handleToggleSavedPost = useCallback(
     async (post: Post) => {
@@ -238,6 +278,14 @@ export default function PostFeed({
         setSavingPostId(post.id);
 
         const isNowSaved = await toggleSavedPost(post);
+
+        if (isNowSaved) {
+          trackEvent("saved_story", {
+            source: analyticsScreenName ?? "feed",
+            postId: post.id,
+            title: post.title,
+          });
+        }
 
         setSavedPostIds((currentIds) => {
           if (isNowSaved) {
@@ -252,7 +300,7 @@ export default function PostFeed({
         setSavingPostId(null);
       }
     },
-    [savingPostId]
+    [analyticsScreenName, savingPostId]
   );
 
   const handleRemovePost = useCallback(
@@ -318,12 +366,14 @@ export default function PostFeed({
           isRemoving={removingPostId === post.id}
           showBookmarkButton={!onRemovePost}
           removePostLabel={removePostLabel}
+          analyticsScreenName={analyticsScreenName}
           onToggleSavedPost={handleToggleSavedPost}
           onRemovePost={onRemovePost ? handleRemovePost : undefined}
         />
       );
     },
     [
+      analyticsScreenName,
       savedPostIds,
       savingPostId,
       removingPostId,

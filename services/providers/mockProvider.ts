@@ -47,7 +47,7 @@ export async function searchPosts(
     mockPosts.filter((post) => {
       const searchableText = [
         post.title,
-        post.excerpt,
+        (post as Post).excerpt ?? "",
         post.body,
         post.category,
       ]

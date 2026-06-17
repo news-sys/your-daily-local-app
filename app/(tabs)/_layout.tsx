@@ -48,6 +48,16 @@ export default function TabsLayout() {
       />
 
       <Tabs.Screen
+        name="watch"
+        options={{
+          title: "Watch",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="play-circle" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="sports"
         options={{
           title: "Sports",

@@ -2,7 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -17,6 +24,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
+import {
+  trackArticleOpen,
+  trackSavedStory,
+  trackSharedStory,
+} from "@/services/analytics";
 import { getPostById, getPostsByCategory } from "@/services/api";
 import { isPostSaved, toggleSavedPost } from "@/services/savedPosts";
 import type { Post } from "@/types/Post";
@@ -204,6 +216,8 @@ export default function ArticleScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const id = params.id;
 
+  const trackedArticleIdRef = useRef<number | null>(null);
+
   const [post, setPost] = useState<Post | undefined>();
   const [relatedPosts, setRelatedPosts] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -229,6 +243,11 @@ export default function ArticleScreen() {
       setPost(result);
 
       if (result) {
+        if (trackedArticleIdRef.current !== result.id) {
+          trackArticleOpen(result.id, result.title);
+          trackedArticleIdRef.current = result.id;
+        }
+
         const [saved, related] = await Promise.all([
           isPostSaved(result.id),
           result.category
@@ -241,7 +260,7 @@ export default function ArticleScreen() {
         if (related) {
           setRelatedPosts(
             related.posts
-              .filter((relatedPost) => relatedPost.id !== result.id)
+              .filter((relatedPost: Post) => relatedPost.id !== result.id)
               .slice(0, 3)
           );
         }
@@ -263,6 +282,8 @@ export default function ArticleScreen() {
         title: post.title,
         message: `${post.title}\n\nShared from Your Daily Local`,
       });
+
+      trackSharedStory(post.id, post.title);
     } catch {
       // Share canceled
     }
@@ -275,6 +296,10 @@ export default function ArticleScreen() {
       setIsSaving(true);
       const nextSavedState = await toggleSavedPost(post);
       setIsSaved(nextSavedState);
+
+      if (nextSavedState) {
+        trackSavedStory(post.id, post.title);
+      }
     } finally {
       setIsSaving(false);
     }
