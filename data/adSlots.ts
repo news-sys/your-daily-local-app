@@ -35,7 +35,7 @@ export const adSlots: AdSlot[] = [
       {
         id: "home-top-1",
         imageKey: "sample-ad",
-        url: "https://yourdailylocal.com/advertise",
+        
       },
       {
         id: "home-top-2",
@@ -50,7 +50,7 @@ export const adSlots: AdSlot[] = [
       {
         id: "home-between-1",
         imageKey: "sample-ad",
-        url: "https://yourdailylocal.com/advertise",
+        
       },
       {
         id: "home-between-2",
@@ -65,7 +65,7 @@ export const adSlots: AdSlot[] = [
       {
         id: "article-top-1",
         imageKey: "sample-ad",
-        url: "https://yourdailylocal.com/advertise",
+        
       },
       {
         id: "article-top-2",
@@ -80,7 +80,7 @@ export const adSlots: AdSlot[] = [
       {
         id: "article-after-2-1",
         imageKey: "sample-ad",
-        url: "https://yourdailylocal.com/advertise",
+        
       },
       {
         id: "article-after-2-2",
@@ -95,7 +95,7 @@ export const adSlots: AdSlot[] = [
       {
         id: "article-after-5-1",
         imageKey: "sample-ad",
-        url: "https://yourdailylocal.com/advertise",
+        
       },
       {
         id: "article-after-5-2",
@@ -110,7 +110,7 @@ export const adSlots: AdSlot[] = [
       {
         id: "article-bottom-1",
         imageKey: "sample-ad",
-        url: "https://yourdailylocal.com/advertise",
+        
       },
       {
         id: "article-bottom-2",

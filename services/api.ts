@@ -6,9 +6,7 @@ import * as mockProvider from "./providers/mockProvider";
 import * as wordpressProvider from "./providers/wordpressProvider";
 
 const primaryProvider =
-  DEV_CONFIG.dataProvider === "wordpress"
-    ? wordpressProvider
-    : mockProvider;
+  DEV_CONFIG.dataProvider === "wordpress" ? wordpressProvider : mockProvider;
 
 async function withFallback<T>(
   request: () => Promise<T>,
@@ -21,39 +19,38 @@ async function withFallback<T>(
   }
 }
 
-export async function getTopStories(
-  page = 1
-): Promise<PaginatedPosts> {
+export async function getTopStories(page = 1): Promise<PaginatedPosts> {
   return withFallback(
     () => primaryProvider.getTopStories(page),
     () => mockProvider.getTopStories(page)
   );
 }
 
-export async function getNewsPosts(
-  page = 1
-): Promise<PaginatedPosts> {
+export async function getNewsPosts(page = 1): Promise<PaginatedPosts> {
   return withFallback(
     () => primaryProvider.getNewsPosts(page),
     () => mockProvider.getNewsPosts(page)
   );
 }
 
-export async function getSportsPosts(
-  page = 1
-): Promise<PaginatedPosts> {
+export async function getSportsPosts(page = 1): Promise<PaginatedPosts> {
   return withFallback(
     () => primaryProvider.getSportsPosts(page),
     () => mockProvider.getSportsPosts(page)
   );
 }
 
-export async function getBreakingPosts(
-  page = 1
-): Promise<PaginatedPosts> {
+export async function getBreakingPosts(page = 1): Promise<PaginatedPosts> {
   return withFallback(
     () => primaryProvider.getBreakingPosts(page),
     () => mockProvider.getBreakingPosts(page)
+  );
+}
+
+export async function getLiveVideoPosts(page = 1): Promise<PaginatedPosts> {
+  return withFallback(
+    () => wordpressProvider.getLiveVideoPosts(page),
+    () => mockProvider.getTopStories(page)
   );
 }
 
@@ -74,9 +71,7 @@ export async function getHomepageSections(): Promise<HomeSection[]> {
   );
 }
 
-export async function getPostById(
-  id: string
-): Promise<Post | undefined> {
+export async function getPostById(id: string): Promise<Post | undefined> {
   return withFallback(
     () => primaryProvider.getPostById(id),
     () => mockProvider.getPostById(id)

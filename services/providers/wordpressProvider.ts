@@ -502,4 +502,14 @@ export async function searchPosts(
   });
 
   return paginate(posts, page);
+  
+}
+
+export async function getLiveVideoPosts(page = 1): Promise<PaginatedPosts> {
+  const posts = await fetchWordPressPosts({
+    categoryId: 1135,
+    perPage: 25,
+  });
+
+  return paginate(posts, page);
 }

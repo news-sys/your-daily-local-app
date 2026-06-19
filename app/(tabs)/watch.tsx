@@ -1,9 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { memo, useCallback, useEffect, useMemo } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
+    ActivityIndicator,
     Linking,
     Pressable,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
@@ -12,8 +16,19 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
-import { liveStreams, type LiveStream } from "@/data/liveStreams";
 import { trackEvent, trackScreenView } from "@/services/analytics";
+import { getLiveVideoPosts } from "@/services/api";
+import type { Post } from "@/types/Post";
+
+function getYouTubeUrl(text?: string): string | null {
+  if (!text) return null;
+
+  const match = text.match(
+    /(https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/live\/|youtube\.com\/shorts\/)[^\s]+)/i
+  );
+
+  return match?.[1] ?? null;
+}
 
 function getYouTubeVideoId(url: string): string | null {
   const patterns = [
@@ -21,6 +36,7 @@ function getYouTubeVideoId(url: string): string | null {
     /(?:youtu\.be\/)([a-zA-Z0-9_-]{6,})/,
     /(?:youtube\.com\/live\/)([a-zA-Z0-9_-]{6,})/,
     /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{6,})/,
   ];
 
   for (const pattern of patterns) {
@@ -34,14 +50,11 @@ function getYouTubeVideoId(url: string): string | null {
   return null;
 }
 
-const StreamPlayer = memo(function StreamPlayer({
-  stream,
-}: {
-  stream: LiveStream;
-}) {
+const VideoPlayer = memo(function VideoPlayer({ post }: { post: Post }) {
+  const youtubeUrl = useMemo(() => getYouTubeUrl(post.body), [post.body]);
   const videoId = useMemo(
-    () => getYouTubeVideoId(stream.youtubeUrl),
-    [stream.youtubeUrl]
+    () => (youtubeUrl ? getYouTubeVideoId(youtubeUrl) : null),
+    [youtubeUrl]
   );
 
   const embedUrl = useMemo(() => {
@@ -51,27 +64,47 @@ const StreamPlayer = memo(function StreamPlayer({
   }, [videoId]);
 
   const openInYouTube = useCallback(() => {
+    if (!youtubeUrl) return;
+
     trackEvent("screen_view", {
       screenName: "watch_youtube_open",
-      streamId: stream.id,
-      title: stream.title,
-      status: stream.status,
+      postId: post.id,
+      title: post.title,
     });
 
-    Linking.openURL(stream.youtubeUrl);
-  }, [stream]);
+    Linking.openURL(youtubeUrl);
+  }, [post.id, post.title, youtubeUrl]);
+
+  const openArticle = useCallback(() => {
+    trackEvent("article_open", {
+      source: "watch",
+      postId: post.id,
+      title: post.title,
+    });
+
+    router.push({
+      pathname: "/(tabs)/article",
+      params: { id: String(post.id) },
+    });
+  }, [post.id, post.title]);
 
   if (!embedUrl) {
     return (
       <View style={styles.linkCard}>
-        <Ionicons name="logo-youtube" size={34} color="#b00020" />
-        <Text style={styles.linkCardTitle}>{stream.title}</Text>
-        <Text style={styles.linkCardText}>
-          Tap below to open this live stream or replay on YouTube.
-        </Text>
+        {post.image ? (
+          <Image source={{ uri: post.image }} style={styles.linkImage} />
+        ) : (
+          <Ionicons name="logo-youtube" size={34} color="#b00020" />
+        )}
 
-        <Pressable style={styles.primaryButton} onPress={openInYouTube}>
-          <Text style={styles.primaryButtonText}>Open on YouTube</Text>
+        <Text style={styles.linkCardTitle}>{post.title}</Text>
+
+        {post.excerpt ? (
+          <Text style={styles.linkCardText}>{post.excerpt}</Text>
+        ) : null}
+
+        <Pressable style={styles.primaryButton} onPress={openArticle}>
+          <Text style={styles.primaryButtonText}>Open Story</Text>
         </Pressable>
       </View>
     );
@@ -99,72 +132,129 @@ const StreamPlayer = memo(function StreamPlayer({
         />
       </View>
 
-      <Pressable style={styles.secondaryButton} onPress={openInYouTube}>
-        <Ionicons name="logo-youtube" size={18} color="#fff" />
-        <Text style={styles.secondaryButtonText}>Open on YouTube</Text>
-      </Pressable>
+      <Text style={styles.featuredTitle}>{post.title}</Text>
+
+      {post.excerpt ? (
+        <Text style={styles.featuredDescription}>{post.excerpt}</Text>
+      ) : null}
+
+      <View style={styles.buttonRow}>
+        <Pressable style={styles.secondaryButton} onPress={openInYouTube}>
+          <Ionicons name="logo-youtube" size={18} color="#fff" />
+          <Text style={styles.secondaryButtonText}>Open on YouTube</Text>
+        </Pressable>
+
+        <Pressable style={styles.articleButton} onPress={openArticle}>
+          <Text style={styles.articleButtonText}>Read Story</Text>
+        </Pressable>
+      </View>
     </View>
   );
 });
 
-const StreamCard = memo(function StreamCard({ stream }: { stream: LiveStream }) {
-  const openStream = useCallback(() => {
+const ReplayCard = memo(function ReplayCard({ post }: { post: Post }) {
+  const youtubeUrl = useMemo(() => getYouTubeUrl(post.body), [post.body]);
+
+  const openVideo = useCallback(() => {
     trackEvent("screen_view", {
-      screenName: "watch_stream_open",
-      streamId: stream.id,
-      title: stream.title,
-      status: stream.status,
+      screenName: "watch_replay_open",
+      postId: post.id,
+      title: post.title,
     });
 
-    Linking.openURL(stream.youtubeUrl);
-  }, [stream]);
+    if (youtubeUrl) {
+      Linking.openURL(youtubeUrl);
+      return;
+    }
+
+    router.push({
+      pathname: "/(tabs)/article",
+      params: { id: String(post.id) },
+    });
+  }, [post.id, post.title, youtubeUrl]);
 
   return (
-    <View style={styles.streamCard}>
-      <View style={styles.streamHeader}>
-        <Text
-          style={[
-            styles.statusBadge,
-            stream.status === "live"
-              ? styles.liveBadge
-              : stream.status === "upcoming"
-                ? styles.upcomingBadge
-                : styles.replayBadge,
-          ]}
-        >
-          {stream.status === "live"
-            ? "Live"
-            : stream.status === "upcoming"
-              ? "Upcoming"
-              : "Replay"}
-        </Text>
+    <Pressable style={styles.replayCard} onPress={openVideo}>
+      {post.image ? (
+        <Image source={{ uri: post.image }} style={styles.replayImage} />
+      ) : (
+        <View style={styles.replayPlaceholder}>
+          <Ionicons name="play-circle" size={34} color="#999" />
+        </View>
+      )}
 
-        <Text style={styles.streamDate}>{stream.publishedAt}</Text>
+      <View style={styles.replayBody}>
+        <Text style={styles.replayTitle}>{post.title}</Text>
+
+        {post.date ? <Text style={styles.replayDate}>{post.date}</Text> : null}
       </View>
-
-      <Text style={styles.streamTitle}>{stream.title}</Text>
-      <Text style={styles.streamDescription}>{stream.description}</Text>
-
-      <Pressable style={styles.primaryButton} onPress={openStream}>
-        <Text style={styles.primaryButtonText}>Watch</Text>
-      </Pressable>
-    </View>
+    </Pressable>
   );
 });
 
 export default function WatchScreen() {
-  const featuredStream = liveStreams[0];
-  const replayStreams = liveStreams.slice(1);
+  const [videos, setVideos] = useState<Post[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const featuredVideo = videos[0];
+  const replayVideos = videos.slice(1);
+
+  const loadVideos = useCallback(async (refreshing = false) => {
+    try {
+      refreshing ? setIsRefreshing(true) : setIsLoading(true);
+      setErrorMessage(null);
+
+      if (refreshing) {
+        trackEvent("screen_view", {
+          screenName: "watch",
+          action: "refresh",
+        });
+      }
+
+      const result = await getLiveVideoPosts(1);
+      setVideos(result.posts);
+    } catch {
+      setErrorMessage("Unable to load videos. Pull down to try again.");
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     trackScreenView("watch");
-  }, []);
+    loadVideos();
+  }, [loadVideos]);
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+        <StatusBar style="light" />
+
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" />
+          <Text style={styles.centerText}>Loading videos...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <StatusBar style="light" />
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => loadVideos(true)}
+          />
+        }
+      >
         <View style={styles.header}>
           <Text style={styles.logoText}>Your Daily Local</Text>
           <Text style={styles.feedTitle}>Watch</Text>
@@ -178,28 +268,40 @@ export default function WatchScreen() {
           </Text>
 
           <Text style={styles.heroText}>
-            Watch live shows, community coverage, and recent Your Daily Local
-            video broadcasts.
+            Watch live shows, community coverage, government meetings, and
+            recent Your Daily Local video broadcasts.
           </Text>
         </View>
 
-        {featuredStream ? (
-          <>
-            <Text style={styles.sectionTitle}>{featuredStream.title}</Text>
-            <Text style={styles.sectionDescription}>
-              {featuredStream.description}
-            </Text>
-
-            <StreamPlayer stream={featuredStream} />
-          </>
+        {errorMessage ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
         ) : null}
 
-        {replayStreams.length > 0 ? (
-          <View style={styles.replaySection}>
-            <Text style={styles.sectionTitle}>Recent Replays</Text>
+        {featuredVideo ? (
+          <>
+            <Text style={styles.sectionTitle}>Featured Video</Text>
+            <VideoPlayer post={featuredVideo} />
+          </>
+        ) : (
+          <View style={styles.linkCard}>
+            <Ionicons name="play-circle" size={38} color="#999" />
 
-            {replayStreams.map((stream) => (
-              <StreamCard key={stream.id} stream={stream} />
+            <Text style={styles.linkCardTitle}>No videos available</Text>
+
+            <Text style={styles.linkCardText}>
+              Live Video posts from YourDailyLocal.com will appear here.
+            </Text>
+          </View>
+        )}
+
+        {replayVideos.length > 0 ? (
+          <View style={styles.replaySection}>
+            <Text style={styles.sectionTitle}>Recent Videos</Text>
+
+            {replayVideos.map((post) => (
+              <ReplayCard key={String(post.id)} post={post} />
             ))}
           </View>
         ) : null}
@@ -212,6 +314,21 @@ const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: "#111",
     flex: 1,
+  },
+  loadingContainer: {
+    alignItems: "center",
+    backgroundColor: "#f6f6f6",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  centerText: {
+    color: "#666",
+    fontSize: 15,
+    marginTop: 10,
+    textAlign: "center",
   },
   container: {
     backgroundColor: "#f6f6f6",
@@ -265,17 +382,25 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 10,
   },
+  errorBox: {
+    backgroundColor: "#fdecec",
+    borderColor: "#f4b4b4",
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 14,
+    padding: 12,
+  },
+  errorText: {
+    color: "#8a1f1f",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+  },
   sectionTitle: {
     color: "#111",
     fontSize: 22,
     fontWeight: "900",
-    marginBottom: 8,
-  },
-  sectionDescription: {
-    color: "#555",
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   playerBlock: {
     marginBottom: 24,
@@ -291,13 +416,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
     flex: 1,
   },
+  featuredTitle: {
+    color: "#111",
+    fontSize: 22,
+    fontWeight: "900",
+    lineHeight: 28,
+    marginTop: 14,
+  },
+  featuredDescription: {
+    color: "#555",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 12,
+  },
   secondaryButton: {
     alignItems: "center",
-    alignSelf: "flex-start",
     backgroundColor: "#b00020",
     borderRadius: 999,
     flexDirection: "row",
-    marginTop: 10,
+    marginRight: 10,
+    marginTop: 8,
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
@@ -307,12 +450,31 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginLeft: 7,
   },
+  articleButton: {
+    alignItems: "center",
+    backgroundColor: "#444",
+    borderRadius: 999,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  articleButtonText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
   linkCard: {
     alignItems: "center",
     backgroundColor: "#fff",
     borderRadius: 18,
     marginBottom: 24,
     padding: 20,
+  },
+  linkImage: {
+    borderRadius: 14,
+    height: 180,
+    marginBottom: 14,
+    width: "100%",
   },
   linkCardTitle: {
     color: "#111",
@@ -330,7 +492,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     alignItems: "center",
-    alignSelf: "flex-start",
+    alignSelf: "center",
     backgroundColor: "#b00020",
     borderRadius: 999,
     marginTop: 14,
@@ -345,54 +507,37 @@ const styles = StyleSheet.create({
   replaySection: {
     marginTop: 8,
   },
-  streamCard: {
+  replayCard: {
     backgroundColor: "#fff",
-    borderRadius: 18,
-    marginBottom: 14,
-    padding: 16,
-  },
-  streamHeader: {
-    alignItems: "center",
+    borderRadius: 16,
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  statusBadge: {
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: "900",
+    marginBottom: 12,
     overflow: "hidden",
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    textTransform: "uppercase",
   },
-  liveBadge: {
-    backgroundColor: "#b00020",
-    color: "#fff",
+  replayImage: {
+    height: 105,
+    width: 115,
   },
-  upcomingBadge: {
-    backgroundColor: "#111",
-    color: "#fff",
+  replayPlaceholder: {
+    alignItems: "center",
+    backgroundColor: "#e9e9e9",
+    height: 105,
+    justifyContent: "center",
+    width: 115,
   },
-  replayBadge: {
-    backgroundColor: "#e8e8e8",
-    color: "#333",
+  replayBody: {
+    flex: 1,
+    padding: 12,
   },
-  streamDate: {
+  replayTitle: {
+    color: "#111",
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 21,
+  },
+  replayDate: {
     color: "#888",
     fontSize: 12,
-    fontWeight: "700",
-  },
-  streamTitle: {
-    color: "#111",
-    fontSize: 19,
-    fontWeight: "900",
-    lineHeight: 25,
-  },
-  streamDescription: {
-    color: "#555",
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 7,
+    marginTop: 8,
   },
 });

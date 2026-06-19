@@ -9,11 +9,11 @@ export type LiveStream = {
 
 export const liveStreams: LiveStream[] = [
   {
-    id: "morning-pick-up",
-    title: "Morning Pick-Up",
+    id: "ydl-channel",
+    title: "Your Daily Local Video Center",
     description:
-      "Your Daily Local's morning news show with the stories you need to start the day.",
-    youtubeUrl: "https://www.youtube.com/@YourDailyLocal/live",
+      "Watch Morning Pick-Up episodes, live broadcasts, government meetings, and community events.",
+    youtubeUrl: "https://www.youtube.com/@yourdailylocal6027/streams",
     status: "upcoming",
     publishedAt: new Date().toISOString(),
   },
