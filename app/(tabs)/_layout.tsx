@@ -89,6 +89,7 @@ export default function TabsLayout() {
 
       <Tabs.Screen name="article" options={{ href: null }} />
       <Tabs.Screen name="category/[slug]" options={{ href: null }} />
+      <Tabs.Screen name="settings" options={{ href: null }} />
     </Tabs>
   );
 }

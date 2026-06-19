@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
@@ -100,6 +102,13 @@ export default function HomeScreen() {
         }
       >
         <View style={styles.header}>
+          <Pressable
+            style={styles.settingsButton}
+            onPress={() => router.push("/settings")}
+          >
+            <Ionicons name="settings-outline" size={24} color="#666" />
+          </Pressable>
+
           <Image source={logo} style={styles.logo} resizeMode="contain" />
 
           <Text style={styles.tagline}>
@@ -291,6 +300,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
     paddingTop: 4,
+  },
+  settingsButton: {
+    position: "absolute",
+    right: 0,
+    top: 8,
+    zIndex: 10,
   },
   logo: {
     height: 72,
