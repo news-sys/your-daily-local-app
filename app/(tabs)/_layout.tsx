@@ -21,18 +21,15 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home" size={size} color={color} />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="breaking"
-        options={{
-          title: "Breaking",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="alert-circle" size={size} color={color} />
+          tabBarIcon: ({
+            color,
+            size,
+          }) => (
+            <Ionicons
+              name="home"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
@@ -41,8 +38,15 @@ export default function TabsLayout() {
         name="news"
         options={{
           title: "News",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="newspaper" size={size} color={color} />
+          tabBarIcon: ({
+            color,
+            size,
+          }) => (
+            <Ionicons
+              name="newspaper"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
@@ -51,8 +55,15 @@ export default function TabsLayout() {
         name="watch"
         options={{
           title: "Watch",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="play-circle" size={size} color={color} />
+          tabBarIcon: ({
+            color,
+            size,
+          }) => (
+            <Ionicons
+              name="play-circle"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
@@ -61,8 +72,15 @@ export default function TabsLayout() {
         name="sports"
         options={{
           title: "Sports",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="football" size={size} color={color} />
+          tabBarIcon: ({
+            color,
+            size,
+          }) => (
+            <Ionicons
+              name="football"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
@@ -71,8 +89,15 @@ export default function TabsLayout() {
         name="saved"
         options={{
           title: "Saved",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bookmark" size={size} color={color} />
+          tabBarIcon: ({
+            color,
+            size,
+          }) => (
+            <Ionicons
+              name="bookmark"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
@@ -81,15 +106,46 @@ export default function TabsLayout() {
         name="search"
         options={{
           title: "Search",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="search" size={size} color={color} />
+          tabBarIcon: ({
+            color,
+            size,
+          }) => (
+            <Ionicons
+              name="search"
+              size={size}
+              color={color}
+            />
           ),
         }}
       />
 
-      <Tabs.Screen name="article" options={{ href: null }} />
-      <Tabs.Screen name="category/[slug]" options={{ href: null }} />
-      <Tabs.Screen name="settings" options={{ href: null }} />
+      <Tabs.Screen
+        name="breaking"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="article"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="category/[slug]"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="settings"
+        options={{
+          href: null,
+        }}
+      />
     </Tabs>
   );
 }

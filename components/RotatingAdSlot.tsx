@@ -1,153 +1,341 @@
+import { useIsFocused } from "@react-navigation/native";
 import { Image } from "expo-image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
-
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-    getAdSlotByPlacement,
-    type AdPlacement,
-    type LocalAdImageKey,
-} from "@/data/adSlots";
-import { trackAdImpression, trackEvent } from "@/services/analytics";
+  AppState,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
-const localAdImages: Partial<Record<LocalAdImageKey, number>> = {
-  "sample-ad": require("../assets/images/ads/sample-banner.jpg"),
-};
+import type { AdPlacement } from "@/data/adSlots";
+import {
+  buildWeightedRotation,
+  getAds,
+  getAdsForRotation,
+  recordAdClick,
+  recordAdImpression,
+  type WordPressAd,
+} from "@/services/ads";
+import { trackAdImpression } from "@/services/analytics";
 
 type RotatingAdSlotProps = {
-  placement: AdPlacement;
+  placement?: AdPlacement;
+  rotationSlug?: string;
+  trackingPlacement?: string;
+  rotationIntervalMs?: number;
+  sponsorLabel?: string;
 };
 
-export default function RotatingAdSlot({ placement }: RotatingAdSlotProps) {
-  const slot = getAdSlotByPlacement(placement);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const loggedImpressionKeys = useRef<Set<string>>(new Set());
+type RotationState = {
+  sourceKey: string;
+  signature: string;
+  ads: WordPressAd[];
+  index: number;
+};
 
-  const ads = useMemo(() => slot?.ads ?? [], [slot?.ads]);
+// Recheck the shared cache without forcing a network request.
+// services/ads.ts controls its five-minute freshness policy.
+const CACHE_CHECK_INTERVAL_MS = 15000;
+const DEFAULT_ROTATION_INTERVAL_MS = 7000;
+
+function safeInterval(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(1000, value)
+    : DEFAULT_ROTATION_INTERVAL_MS;
+}
+
+export default function RotatingAdSlot({
+  placement,
+  rotationSlug,
+  trackingPlacement,
+  rotationIntervalMs,
+  sponsorLabel,
+}: RotatingAdSlotProps) {
+  const isFocused = useIsFocused();
+
+  const [appActive, setAppActive] = useState(
+    AppState.currentState !== "background" &&
+      AppState.currentState !== "inactive"
+  );
+
+  const active = isFocused && appActive;
+
+  const sourceKey = rotationSlug
+    ? `rotation:${rotationSlug}`
+    : placement
+      ? `placement:${placement}`
+      : "";
+
+  const trackingKey =
+    trackingPlacement ??
+    placement ??
+    rotationSlug ??
+    "unknown-ad-placement";
+
+  const [rotation, setRotation] = useState<RotationState>({
+    sourceKey: "",
+    signature: "",
+    ads: [],
+    index: 0,
+  });
+
+  const impressionKeyRef = useRef<string | null>(null);
+
+  const currentAd =
+    rotation.sourceKey === sourceKey
+      ? rotation.ads[rotation.index]
+      : undefined;
+
+  const effectiveIntervalMs = safeInterval(
+    rotationIntervalMs ?? currentAd?.rotationIntervalMs
+  );
 
   useEffect(() => {
-    if (!slot || ads.length <= 1) return;
+    const subscription = AppState.addEventListener(
+      "change",
+      (state) => {
+        setAppActive(state === "active");
+      }
+    );
 
-    const interval = setInterval(() => {
-      setActiveIndex((currentIndex) => (currentIndex + 1) % ads.length);
-    }, slot.rotationIntervalMs ?? 7000);
-
-    return () => clearInterval(interval);
-  }, [ads.length, slot]);
-
-  const activeAd = ads[activeIndex];
-
-  const imageSource = activeAd?.imageKey
-    ? localAdImages[activeAd.imageKey]
-    : undefined;
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
-    if (!activeAd) return;
+    if (!active || !sourceKey) return;
 
-    const impressionKey = `${placement}-${activeAd.id}`;
+    let cancelled = false;
+    let loading = false;
 
-    if (loggedImpressionKeys.current.has(impressionKey)) {
+    async function refresh(): Promise<void> {
+      if (loading || cancelled) return;
+
+      loading = true;
+
+      try {
+        const result = rotationSlug
+          ? await getAdsForRotation(
+              rotationSlug,
+              safeInterval(rotationIntervalMs)
+            )
+          : placement
+            ? await getAds(placement)
+            : [];
+
+        if (cancelled) return;
+
+        // Compare the underlying list, not its randomized order.
+        // Unchanged checks must not restart the displayed ad.
+        const signature = JSON.stringify(result);
+        const ordered = buildWeightedRotation(result);
+
+        setRotation((previous) => {
+          if (
+            previous.sourceKey === sourceKey &&
+            previous.signature === signature
+          ) {
+            return previous;
+          }
+
+          const previousAdId =
+            previous.sourceKey === sourceKey
+              ? previous.ads[previous.index]?.id
+              : undefined;
+
+          const retainedIndex = ordered.findIndex(
+            (ad) => ad.id === previousAdId
+          );
+
+          return {
+            sourceKey,
+            signature,
+            ads: ordered,
+            index: retainedIndex >= 0 ? retainedIndex : 0,
+          };
+        });
+      } catch (error) {
+        // Keep displayed ads during temporary request failures.
+        // Successful empty responses still clear the rotation.
+        if (!cancelled) {
+          console.warn(
+            "[RotatingAdSlot] Unable to refresh ads:",
+            error
+          );
+        }
+      } finally {
+        loading = false;
+      }
+    }
+
+    void refresh();
+
+    const timer = setInterval(
+      () => void refresh(),
+      CACHE_CHECK_INTERVAL_MS
+    );
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [
+    active,
+    sourceKey,
+    placement,
+    rotationSlug,
+    rotationIntervalMs,
+  ]);
+
+  useEffect(() => {
+    if (
+      !active ||
+      rotation.sourceKey !== sourceKey ||
+      rotation.ads.length <= 1
+    ) {
       return;
     }
 
-    loggedImpressionKeys.current.add(impressionKey);
+    const timer = setInterval(() => {
+      setRotation((previous) => {
+        if (
+          previous.sourceKey !== sourceKey ||
+          previous.ads.length <= 1
+        ) {
+          return previous;
+        }
 
-    trackAdImpression(placement, activeAd.id);
+        return {
+          ...previous,
+          index: (previous.index + 1) % previous.ads.length,
+        };
+      });
+    }, effectiveIntervalMs);
 
-    console.log("Ad impression", {
-      placement,
-      adId: activeAd.id,
-      imageKey: activeAd.imageKey,
-      viewedAt: new Date().toISOString(),
-    });
-  }, [activeAd, placement]);
+    return () => clearInterval(timer);
+  }, [
+    active,
+    sourceKey,
+    rotation.sourceKey,
+    rotation.ads,
+    effectiveIntervalMs,
+  ]);
+
+  useEffect(() => {
+    if (!active || !currentAd) return;
+
+    const key = JSON.stringify([
+      sourceKey,
+      trackingKey,
+      currentAd.id,
+    ]);
+
+    if (impressionKeyRef.current === key) return;
+
+    impressionKeyRef.current = key;
+
+    void recordAdImpression(currentAd.id, trackingKey);
+
+    trackAdImpression(
+      trackingKey,
+      currentAd.sponsorName ?? undefined
+    );
+  }, [active, currentAd, sourceKey, trackingKey]);
 
   const handlePress = useCallback(async () => {
-    if (!activeAd) return;
+    if (!currentAd) return;
 
-    trackEvent("ad_impression", {
-      placement,
-      advertiser: activeAd.id,
-      action: "click",
-      target: activeAd.url ?? activeAd.phone ?? null,
-    });
+    void recordAdClick(currentAd.id, trackingKey);
 
-    console.log("Ad clicked", {
-      placement,
-      adId: activeAd.id,
-      imageKey: activeAd.imageKey,
-      target: activeAd.url ?? activeAd.phone ?? null,
-      clickedAt: new Date().toISOString(),
-    });
-
-    const target = activeAd.url ?? activeAd.phone;
-
-    if (!target) return;
-
-    const link = activeAd.phone ? `tel:${activeAd.phone}` : target;
-
-    const canOpen = await Linking.canOpenURL(link);
-
-    if (canOpen) {
-      await Linking.openURL(link);
+    if (currentAd.destinationUrl) {
+      try {
+        await Linking.openURL(currentAd.destinationUrl);
+        return;
+      } catch {
+        // Fall through to the phone number when available.
+      }
     }
-  }, [activeAd, placement]);
 
-  if (!slot || ads.length === 0 || !activeAd) {
-    return null;
-  }
+    if (currentAd.phoneNumber) {
+      try {
+        await Linking.openURL(`tel:${currentAd.phoneNumber}`);
+      } catch {
+        // Linking failures must not interrupt the screen.
+      }
+    }
+  }, [currentAd, trackingKey]);
+
+  const presentingSponsorText = useMemo(() => {
+    if (placement !== "presenting-home") return null;
+
+    const label =
+      sponsorLabel?.trim() ||
+      currentAd?.sponsorName?.trim();
+
+    return label ? `YDL App powered by ${label}` : null;
+  }, [placement, sponsorLabel, currentAd?.sponsorName]);
+
+  if (!currentAd) return null;
 
   return (
-    <View style={styles.wrapper}>
+    <View style={styles.container}>
+      {presentingSponsorText ? (
+        <Text style={styles.presentingText}>
+          {presentingSponsorText}
+        </Text>
+      ) : null}
+
       <Pressable
-        style={styles.adBox}
         onPress={handlePress}
-        disabled={!activeAd.url && !activeAd.phone}
+        disabled={
+          !currentAd.destinationUrl &&
+          !currentAd.phoneNumber
+        }
+        style={styles.pressable}
       >
-        {imageSource ? (
-          <Image
-            source={imageSource}
-            style={styles.adImage}
-            contentFit="contain"
-            transition={250}
-            cachePolicy="memory-disk"
-          />
-        ) : (
-          <View style={styles.placeholder}>
-            <Text style={styles.placeholderText}>Ad Space Available</Text>
-          </View>
-        )}
+        <Image
+          source={{ uri: currentAd.imageUrl }}
+          style={styles.image}
+          contentFit="contain"
+          transition={200}
+          cachePolicy="memory-disk"
+          recyclingKey={currentAd.id}
+        />
       </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: {
-    marginBottom: 18,
-    marginTop: 2,
+  container: {
+    marginVertical: 16,
     width: "100%",
   },
-  adBox: {
-    backgroundColor: "transparent",
-    width: "100%",
+
+  presentingText: {
+    color: "#555",
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 8,
+    textAlign: "center",
   },
-  adImage: {
-    aspectRatio: 900 / 650,
-    backgroundColor: "transparent",
-    width: "100%",
-  },
-  placeholder: {
+
+  pressable: {
     alignItems: "center",
-    aspectRatio: 900 / 650,
-    backgroundColor: "#f1f1f1",
-    borderColor: "#d0d0d0",
-    borderWidth: 1,
     justifyContent: "center",
     width: "100%",
   },
-  placeholderText: {
-    color: "#777",
-    fontSize: 13,
-    fontWeight: "800",
+
+  image: {
+    aspectRatio: 900 / 650,
+    width: "100%",
   },
 });

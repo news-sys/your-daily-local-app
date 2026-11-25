@@ -1,11 +1,21 @@
+
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   FlatList,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -15,12 +25,33 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
+import type {
+  AdPlacementRule,
+  AdRuleSurface,
+  LegacyAdPlacement,
+} from "@/data/adSlots";
+import { getFeedPlacementRules } from "@/services/ads";
 import { trackEvent, trackScreenView } from "@/services/analytics";
-import { getSavedPosts, toggleSavedPost } from "@/services/savedPosts";
-import type { PaginatedPosts, Post } from "@/types/Post";
+import {
+  getSavedPosts,
+  toggleSavedPost,
+} from "@/services/savedPosts";
+import type {
+  ContentRequestOptions,
+  PaginatedPosts,
+  Post,
+} from "@/types/Post";
+import { formatDisplayDate } from "@/utils/formatDisplayDate";
+
+const DEFAULT_FOCUS_REFRESH_MS = 60 * 1000;
+const BREAKING_FOCUS_REFRESH_MS = 30 * 1000;
+const BACK_TO_TOP_THRESHOLD = 700;
 
 type PostFeedProps = {
-  fetchPosts: (page?: number) => Promise<PaginatedPosts>;
+  fetchPosts: (
+    page?: number,
+    options?: ContentRequestOptions
+  ) => Promise<PaginatedPosts>;
   analyticsScreenName?: string;
   title?: string;
   emptyMessage?: string;
@@ -30,24 +61,195 @@ type PostFeedProps = {
   removePostLabel?: string;
 };
 
-type FeedItem = { type: "post"; post: Post } | { type: "ad"; id: string };
+type FeedItem =
+  | { type: "post"; post: Post }
+  | {
+      type: "ad";
+      id: string;
+      legacyPlacement?: LegacyAdPlacement;
+      rotationSlug?: string;
+      trackingPlacement: string;
+      rotationIntervalMs?: number;
+    };
 
-function buildFeedItems(posts: Post[], showAds: boolean): FeedItem[] {
-  if (!showAds) {
-    return posts.map((post) => ({ type: "post", post }));
+type LoadMode = "initial" | "manual" | "background";
+
+function getFeedSurface(
+  analyticsScreenName: string | undefined,
+  title: string
+): AdRuleSurface | null {
+  const value = [analyticsScreenName ?? "", title]
+    .join(" ")
+    .trim()
+    .toLowerCase();
+
+  if (value.includes("forest")) return "forest-county-news";
+  if (value.includes("breaking")) return "breaking";
+  if (value.includes("sports")) return "sports";
+
+  if (
+    value.includes("watch") ||
+    value.includes("live video") ||
+    value.includes("live-video")
+  ) {
+    return "watch";
   }
 
+  if (value.includes("saved")) return "saved";
+  if (value.includes("search")) return "search";
+  if (value.includes("news")) return "news";
+
+  return null;
+}
+
+function buildLegacyFeedItems(posts: Post[]): FeedItem[] {
   const items: FeedItem[] = [];
 
   posts.forEach((post, index) => {
     items.push({ type: "post", post });
 
-    if ((index + 1) % 4 === 0 && index !== posts.length - 1) {
-      items.push({ type: "ad", id: `ad-${index}` });
+    if (index === 0 && posts.length > 1) {
+      items.push({
+        type: "ad",
+        id: "legacy-presenting-feed-ad",
+        legacyPlacement: "presenting-feed",
+        trackingPlacement: "presenting-feed",
+      });
+    }
+
+    if (index === 4 && posts.length > 5) {
+      items.push({
+        type: "ad",
+        id: "legacy-rotation-feed-ad",
+        legacyPlacement: "legacy-rotation",
+        trackingPlacement: "legacy-rotation",
+      });
     }
   });
 
   return items;
+}
+
+function buildDynamicFeedItems(
+  posts: Post[],
+  rules: AdPlacementRule[]
+): FeedItem[] {
+  const items: FeedItem[] = [];
+
+  posts.forEach((post, index) => {
+    items.push({ type: "post", post });
+
+    const storyNumber = index + 1;
+
+    const matchingRules = rules.filter(
+      (rule) =>
+        rule.feedPosition?.type === "after-story" &&
+        rule.feedPosition.storyNumber === storyNumber &&
+        Boolean(rule.rotationKey)
+    );
+
+    matchingRules.forEach((rule) => {
+      if (!rule.rotationKey) return;
+
+      items.push({
+        type: "ad",
+        id: `dynamic-feed-ad-${rule.id}-${storyNumber}`,
+        rotationSlug: rule.rotationKey,
+        trackingPlacement: rule.key,
+        rotationIntervalMs: rule.rotationIntervalMs,
+      });
+    });
+  });
+
+  return items;
+}
+
+function buildFeedItems(
+  posts: Post[],
+  showAds: boolean,
+  rules: AdPlacementRule[]
+): FeedItem[] {
+  if (!showAds) {
+    return posts.map((post) => ({
+      type: "post",
+      post,
+    }));
+  }
+
+  if (rules.length > 0) {
+    return buildDynamicFeedItems(posts, rules);
+  }
+
+  return buildLegacyFeedItems(posts);
+}
+
+function getFocusRefreshInterval(
+  analyticsScreenName: string | undefined,
+  title: string
+): number {
+  const label = [analyticsScreenName ?? "", title]
+    .join(" ")
+    .toLowerCase();
+
+  return label.includes("breaking")
+    ? BREAKING_FOCUS_REFRESH_MS
+    : DEFAULT_FOCUS_REFRESH_MS;
+}
+
+function postHasChanged(
+  currentPost: Post,
+  nextPost: Post
+): boolean {
+  return (
+    currentPost.id !== nextPost.id ||
+    currentPost.title !== nextPost.title ||
+    currentPost.excerpt !== nextPost.excerpt ||
+    currentPost.date !== nextPost.date ||
+    currentPost.modified !== nextPost.modified ||
+    currentPost.image !== nextPost.image ||
+    currentPost.category !== nextPost.category
+  );
+}
+
+function postListsAreEqual(
+  currentPosts: Post[],
+  nextPosts: Post[]
+): boolean {
+  if (currentPosts.length !== nextPosts.length) {
+    return false;
+  }
+
+  return currentPosts.every((currentPost, index) => {
+    const nextPost = nextPosts[index];
+
+    return Boolean(
+      nextPost && !postHasChanged(currentPost, nextPost)
+    );
+  });
+}
+
+function mergeBackgroundFirstPage(
+  currentPosts: Post[],
+  refreshedPosts: Post[]
+): Post[] {
+  // An empty refresh must not wipe a working feed.
+  if (refreshedPosts.length === 0 && currentPosts.length > 0) {
+    return currentPosts;
+  }
+
+  if (currentPosts.length === 0) {
+    return refreshedPosts;
+  }
+
+  const refreshedIds = new Set(
+    refreshedPosts.map((post) => post.id)
+  );
+
+  const existingRemainder = currentPosts.filter(
+    (post) => !refreshedIds.has(post.id)
+  );
+
+  return [...refreshedPosts, ...existingRemainder];
 }
 
 type FeedPostCardProps = {
@@ -62,8 +264,32 @@ type FeedPostCardProps = {
   onRemovePost?: (post: Post) => Promise<void>;
 };
 
-const FeedAdSlot = memo(function FeedAdSlot() {
-  return <RotatingAdSlot placement="home-between-sections" />;
+const FeedAdSlot = memo(function FeedAdSlot({
+  legacyPlacement,
+  rotationSlug,
+  trackingPlacement,
+  rotationIntervalMs,
+}: {
+  legacyPlacement?: LegacyAdPlacement;
+  rotationSlug?: string;
+  trackingPlacement: string;
+  rotationIntervalMs?: number;
+}) {
+  if (rotationSlug) {
+    return (
+      <RotatingAdSlot
+        rotationSlug={rotationSlug}
+        trackingPlacement={trackingPlacement}
+        rotationIntervalMs={rotationIntervalMs}
+      />
+    );
+  }
+
+  if (legacyPlacement) {
+    return <RotatingAdSlot placement={legacyPlacement} />;
+  }
+
+  return null;
 });
 
 const FeedPostCard = memo(function FeedPostCard({
@@ -93,7 +319,7 @@ const FeedPostCard = memo(function FeedPostCard({
   const handleBookmarkPress = useCallback(
     (event: { stopPropagation: () => void }) => {
       event.stopPropagation();
-      onToggleSavedPost(post);
+      void onToggleSavedPost(post);
     },
     [onToggleSavedPost, post]
   );
@@ -103,7 +329,7 @@ const FeedPostCard = memo(function FeedPostCard({
       event.stopPropagation();
 
       if (onRemovePost) {
-        onRemovePost(post);
+        void onRemovePost(post);
       }
     },
     [onRemovePost, post]
@@ -118,10 +344,15 @@ const FeedPostCard = memo(function FeedPostCard({
           contentFit="cover"
           transition={200}
           cachePolicy="memory-disk"
+          recyclingKey={String(post.id)}
         />
       ) : (
         <View style={styles.imagePlaceholder}>
-          <Ionicons name="newspaper-outline" size={34} color="#999" />
+          <Ionicons
+            name="newspaper-outline"
+            size={34}
+            color="#999"
+          />
         </View>
       )}
 
@@ -142,15 +373,25 @@ const FeedPostCard = memo(function FeedPostCard({
       <View style={styles.cardBody}>
         <View style={styles.metaRow}>
           {post.category ? (
-            <Text style={styles.category}>{post.category}</Text>
+            <Text style={styles.category}>
+              {post.category}
+            </Text>
           ) : null}
 
-          {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+          {post.date ? (
+            <Text style={styles.date}>
+              {formatDisplayDate(post.date)}
+            </Text>
+          ) : null}
         </View>
 
         <Text style={styles.title}>{post.title}</Text>
 
-        {post.excerpt ? <Text style={styles.excerpt}>{post.excerpt}</Text> : null}
+        {post.excerpt ? (
+          <Text style={styles.excerpt}>
+            {post.excerpt}
+          </Text>
+        ) : null}
 
         {onRemovePost ? (
           <Pressable
@@ -158,7 +399,11 @@ const FeedPostCard = memo(function FeedPostCard({
             disabled={isRemoving}
             onPress={handleRemovePress}
           >
-            <Ionicons name="bookmark" size={16} color="#b00020" />
+            <Ionicons
+              name="bookmark"
+              size={16}
+              color="#b00020"
+            />
             <Text style={styles.removeButtonText}>
               {isRemoving ? "Removing..." : removePostLabel}
             </Text>
@@ -179,6 +424,8 @@ export default function PostFeed({
   onRemovePost,
   removePostLabel = "Remove",
 }: PostFeedProps) {
+  const listRef = useRef<FlatList<FeedItem>>(null);
+
   const [posts, setPosts] = useState<Post[]>([]);
   const [savedPostIds, setSavedPostIds] = useState<number[]>([]);
   const [nextPage, setNextPage] = useState<number | null>(1);
@@ -186,30 +433,130 @@ export default function PostFeed({
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [savingPostId, setSavingPostId] = useState<number | null>(null);
-  const [removingPostId, setRemovingPostId] = useState<number | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [savingPostId, setSavingPostId] = useState<number | null>(
+    null
+  );
+  const [removingPostId, setRemovingPostId] = useState<
+    number | null
+  >(null);
+  const [errorMessage, setErrorMessage] = useState<
+    string | null
+  >(null);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const [adRules, setAdRules] = useState<AdPlacementRule[]>([]);
 
   const isSavedStoriesFeed = title === "Saved Stories";
 
-  useEffect(() => {
-    if (!analyticsScreenName) return;
+  const feedSurface = useMemo(
+    () => getFeedSurface(analyticsScreenName, title),
+    [analyticsScreenName, title]
+  );
 
-    trackScreenView(analyticsScreenName);
+  const postsRef = useRef<Post[]>([]);
+  const isLoadingRef = useRef(false);
+  const isLoadingMoreRef = useRef(false);
+  const isLoadingAdRulesRef = useRef(false);
+  const hasReceivedInitialFocusRef = useRef(false);
+  const hasCompletedInitialLoadRef = useRef(false);
+  const lastRefreshRef = useRef(0);
+
+  const focusRefreshInterval = useMemo(
+    () => getFocusRefreshInterval(analyticsScreenName, title),
+    [analyticsScreenName, title]
+  );
+
+  const updatePosts = useCallback((nextPosts: Post[]) => {
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
+  }, []);
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const shouldShow =
+        event.nativeEvent.contentOffset.y >=
+        BACK_TO_TOP_THRESHOLD;
+
+      setShowBackToTop((current) =>
+        current === shouldShow ? current : shouldShow
+      );
+    },
+    []
+  );
+
+  const scrollToTop = useCallback(() => {
+    listRef.current?.scrollToOffset({
+      offset: 0,
+      animated: true,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (analyticsScreenName) {
+      trackScreenView(analyticsScreenName);
+    }
   }, [analyticsScreenName]);
 
   const refreshSavedPostIds = useCallback(async () => {
-    const savedPosts = await getSavedPosts();
-    setSavedPostIds(savedPosts.map((post) => post.id));
+    try {
+      const savedPosts = await getSavedPosts();
+      setSavedPostIds(savedPosts.map((post) => post.id));
+    } catch {
+      // A temporary storage failure should not erase
+      // the bookmark indicators already on screen.
+    }
   }, []);
 
-  const loadFirstPage = useCallback(
-    async (refreshing = false) => {
-      try {
-        refreshing ? setIsRefreshing(true) : setIsLoading(true);
-        setErrorMessage(null);
+  const loadAdRules = useCallback(
+    async (forceRefresh = false) => {
+      if (
+        !showAds ||
+        !feedSurface ||
+        isLoadingAdRulesRef.current
+      ) {
+        return;
+      }
 
-        if (refreshing && analyticsScreenName) {
+      isLoadingAdRulesRef.current = true;
+
+      try {
+        const rules = await getFeedPlacementRules(
+          feedSurface,
+          forceRefresh
+        );
+
+        setAdRules(rules);
+      } catch (error) {
+        console.warn(
+          "[PostFeed] Unable to refresh ad placement rules:",
+          error
+        );
+        // Keep existing rules or legacy placements.
+      } finally {
+        isLoadingAdRulesRef.current = false;
+      }
+    },
+    [feedSurface, showAds]
+  );
+
+  const loadFirstPage = useCallback(
+    async (mode: LoadMode = "initial") => {
+      if (isLoadingRef.current) return;
+
+      isLoadingRef.current = true;
+      const forceRefresh = mode !== "initial";
+
+      try {
+        if (mode === "initial") {
+          setIsLoading(true);
+        } else if (mode === "manual") {
+          setIsRefreshing(true);
+        }
+
+        if (mode !== "background") {
+          setErrorMessage(null);
+        }
+
+        if (mode === "manual" && analyticsScreenName) {
           trackEvent("screen_view", {
             screenName: analyticsScreenName,
             action: "refresh",
@@ -217,31 +564,105 @@ export default function PostFeed({
         }
 
         const [result] = await Promise.all([
-          fetchPosts(1),
-          refreshSavedPostIds(),
+          fetchPosts(1, { forceRefresh }),
+          loadAdRules(forceRefresh),
         ]);
 
-        setPosts(result.posts);
-        setHasMore(result.hasMore);
-        setNextPage(result.nextPage);
-      } catch {
-        setErrorMessage("Unable to load stories. Pull down to try again.");
+        const receivedPosts = result.posts;
+
+        if (mode === "background") {
+          const mergedPosts = mergeBackgroundFirstPage(
+            postsRef.current,
+            receivedPosts
+          );
+
+          if (
+            !postListsAreEqual(postsRef.current, mergedPosts)
+          ) {
+            updatePosts(mergedPosts);
+          }
+        } else {
+          // Preserve existing content if a refresh
+          // unexpectedly returns an empty page.
+          const keepExisting =
+            receivedPosts.length === 0 &&
+            postsRef.current.length > 0 &&
+            !isSavedStoriesFeed;
+
+          if (!keepExisting) {
+            if (
+              !postListsAreEqual(
+                postsRef.current,
+                receivedPosts
+              )
+            ) {
+              updatePosts(receivedPosts);
+            }
+
+            setHasMore(result.hasMore);
+            setNextPage(result.nextPage);
+          }
+        }
+
+        // Successful recovery must remove stale errors.
+        setErrorMessage(null);
+        lastRefreshRef.current = Date.now();
+        hasCompletedInitialLoadRef.current = true;
+
+        void refreshSavedPostIds();
+      } catch (error) {
+        console.warn(
+          "[PostFeed] Unable to refresh stories:",
+          error
+        );
+
+        if (mode !== "background") {
+          // Only show the feed error if there are
+          // no previously loaded stories to display.
+          if (postsRef.current.length === 0) {
+            setErrorMessage(
+              "Unable to load stories. Check your connection and pull down to try again."
+            );
+          }
+        }
       } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
+        isLoadingRef.current = false;
+
+        if (mode === "initial") {
+          setIsLoading(false);
+        }
+
+        if (mode === "manual") {
+          setIsRefreshing(false);
+        }
       }
     },
-    [analyticsScreenName, fetchPosts, refreshSavedPostIds]
+    [
+      analyticsScreenName,
+      fetchPosts,
+      isSavedStoriesFeed,
+      loadAdRules,
+      refreshSavedPostIds,
+      updatePosts,
+    ]
   );
 
   const loadMore = useCallback(async () => {
-    if (!hasMore || !nextPage || isLoadingMore || isLoading || isRefreshing) {
+    if (
+      !hasMore ||
+      !nextPage ||
+      isLoadingMoreRef.current ||
+      isLoading ||
+      isRefreshing ||
+      isLoadingRef.current
+    ) {
       return;
     }
 
-    try {
-      setIsLoadingMore(true);
+    isLoadingMoreRef.current = true;
+    setIsLoadingMore(true);
 
+    try {
       if (analyticsScreenName) {
         trackEvent("screen_view", {
           screenName: analyticsScreenName,
@@ -252,27 +673,43 @@ export default function PostFeed({
 
       const result = await fetchPosts(nextPage);
 
-      setPosts((currentPosts) => [...currentPosts, ...result.posts]);
+      const existingIds = new Set(
+        postsRef.current.map((post) => post.id)
+      );
+
+      const newPosts = result.posts.filter(
+        (post) => !existingIds.has(post.id)
+      );
+
+      if (newPosts.length > 0) {
+        updatePosts([...postsRef.current, ...newPosts]);
+      }
+
       setHasMore(result.hasMore);
       setNextPage(result.nextPage);
-    } catch {
-      setErrorMessage("Unable to load more stories.");
+    } catch (error) {
+      console.warn(
+        "[PostFeed] Unable to load additional stories:",
+        error
+      );
+      // Retain existing posts and pagination state.
     } finally {
+      isLoadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
   }, [
     analyticsScreenName,
     fetchPosts,
     hasMore,
-    nextPage,
-    isLoadingMore,
     isLoading,
     isRefreshing,
+    nextPage,
+    updatePosts,
   ]);
 
   const handleToggleSavedPost = useCallback(
     async (post: Post) => {
-      if (savingPostId) return;
+      if (savingPostId !== null) return;
 
       try {
         setSavingPostId(post.id);
@@ -289,13 +726,19 @@ export default function PostFeed({
 
         setSavedPostIds((currentIds) => {
           if (isNowSaved) {
-            return [...currentIds, post.id];
+            return currentIds.includes(post.id)
+              ? currentIds
+              : [...currentIds, post.id];
           }
 
           return currentIds.filter((id) => id !== post.id);
         });
+
+        setErrorMessage(null);
       } catch {
-        setErrorMessage("Unable to update saved story. Please try again.");
+        setErrorMessage(
+          "Unable to update saved story. Please try again."
+        );
       } finally {
         setSavingPostId(null);
       }
@@ -305,55 +748,101 @@ export default function PostFeed({
 
   const handleRemovePost = useCallback(
     async (post: Post) => {
-      if (!onRemovePost || removingPostId) return;
+      if (!onRemovePost || removingPostId !== null) return;
 
       try {
         setRemovingPostId(post.id);
         await onRemovePost(post);
 
-        setPosts((currentPosts) =>
-          currentPosts.filter((item) => item.id !== post.id)
+        updatePosts(
+          postsRef.current.filter((item) => item.id !== post.id)
         );
 
         setSavedPostIds((currentIds) =>
           currentIds.filter((id) => id !== post.id)
         );
+
+        setErrorMessage(null);
       } catch {
-        setErrorMessage("Unable to remove story. Please try again.");
+        setErrorMessage(
+          "Unable to remove story. Please try again."
+        );
       } finally {
         setRemovingPostId(null);
       }
     },
-    [onRemovePost, removingPostId]
+    [onRemovePost, removingPostId, updatePosts]
   );
 
   useEffect(() => {
-    loadFirstPage();
-  }, [loadFirstPage]);
+    async function startFeed(): Promise<void> {
+      await loadFirstPage("initial");
+
+      if (!isSavedStoriesFeed) {
+        void loadFirstPage("background");
+      }
+    }
+
+    void startFeed();
+  }, [isSavedStoriesFeed, loadFirstPage]);
 
   useFocusEffect(
     useCallback(() => {
-      refreshSavedPostIds();
+      void refreshSavedPostIds();
+
+      if (!hasReceivedInitialFocusRef.current) {
+        hasReceivedInitialFocusRef.current = true;
+        return;
+      }
+
+      if (!hasCompletedInitialLoadRef.current) {
+        return;
+      }
 
       if (reloadOnFocus) {
-        loadFirstPage();
+        void loadFirstPage("background");
+        return;
       }
-    }, [reloadOnFocus, loadFirstPage, refreshSavedPostIds])
+
+      if (isSavedStoriesFeed) return;
+
+      const timeSinceRefresh =
+        Date.now() - lastRefreshRef.current;
+
+      if (timeSinceRefresh >= focusRefreshInterval) {
+        void loadFirstPage("background");
+      }
+    }, [
+      focusRefreshInterval,
+      isSavedStoriesFeed,
+      loadFirstPage,
+      refreshSavedPostIds,
+      reloadOnFocus,
+    ])
   );
 
   const feedItems = useMemo(
-    () => buildFeedItems(posts, showAds),
-    [posts, showAds]
+    () => buildFeedItems(posts, showAds, adRules),
+    [adRules, posts, showAds]
   );
 
   const keyExtractor = useCallback((item: FeedItem) => {
-    return item.type === "post" ? String(item.post.id) : item.id;
+    return item.type === "post"
+      ? String(item.post.id)
+      : item.id;
   }, []);
 
   const renderItem = useCallback(
     ({ item }: { item: FeedItem }) => {
       if (item.type === "ad") {
-        return <FeedAdSlot />;
+        return (
+          <FeedAdSlot
+            legacyPlacement={item.legacyPlacement}
+            rotationSlug={item.rotationSlug}
+            trackingPlacement={item.trackingPlacement}
+            rotationIntervalMs={item.rotationIntervalMs}
+          />
+        );
       }
 
       const post = item.post;
@@ -368,38 +857,39 @@ export default function PostFeed({
           removePostLabel={removePostLabel}
           analyticsScreenName={analyticsScreenName}
           onToggleSavedPost={handleToggleSavedPost}
-          onRemovePost={onRemovePost ? handleRemovePost : undefined}
+          onRemovePost={
+            onRemovePost ? handleRemovePost : undefined
+          }
         />
       );
     },
     [
       analyticsScreenName,
-      savedPostIds,
-      savingPostId,
-      removingPostId,
+      handleRemovePost,
+      handleToggleSavedPost,
       onRemovePost,
       removePostLabel,
-      handleToggleSavedPost,
-      handleRemovePost,
+      removingPostId,
+      savedPostIds,
+      savingPostId,
     ]
   );
 
   const renderHeader = useCallback(
     () => (
-      <>
-        <View style={styles.header}>
-          <Text style={styles.logoText}>Your Daily Local</Text>
-          <Text style={styles.feedTitle}>{title}</Text>
-        </View>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>{title}</Text>
 
         {errorMessage ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{errorMessage}</Text>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
           </View>
         ) : null}
-      </>
+      </View>
     ),
-    [title, errorMessage]
+    [errorMessage, title]
   );
 
   const renderFooter = useCallback(() => {
@@ -407,83 +897,104 @@ export default function PostFeed({
 
     return (
       <View style={styles.footerLoader}>
-        <ActivityIndicator />
-        <Text style={styles.footerText}>Loading more stories...</Text>
+        <ActivityIndicator size="small" />
       </View>
     );
   }, [isLoadingMore]);
 
-  const renderEmpty = useCallback(
-    () => (
-      <View style={styles.centerState}>
-        <Ionicons
-          name={isSavedStoriesFeed ? "bookmark-outline" : "newspaper-outline"}
-          size={40}
-          color="#999"
-        />
+  const renderEmpty = useCallback(() => {
+    if (isLoading) return null;
 
-        <Text style={styles.centerText}>{emptyMessage}</Text>
-
-        {isSavedStoriesFeed ? (
-          <>
-            <Text style={styles.emptySubtext}>
-              Browse stories and tap the bookmark icon to save them here.
-            </Text>
-
-            <Pressable style={styles.browseButton} onPress={() => router.push("/")}>
-              <Text style={styles.browseButtonText}>Browse Latest Stories</Text>
-            </Pressable>
-          </>
-        ) : null}
-      </View>
-    ),
-    [emptyMessage, isSavedStoriesFeed]
-  );
-
-  if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-        <StatusBar style="light" />
+      <View style={styles.emptyContainer}>
+        <Ionicons
+          name="newspaper-outline"
+          size={42}
+          color="#aaa"
+        />
+        <Text style={styles.emptyText}>
+          {emptyMessage}
+        </Text>
+      </View>
+    );
+  }, [emptyMessage, isLoading]);
 
+  if (isLoading && posts.length === 0) {
+    return (
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "left", "right"]}
+      >
+        <StatusBar style="light" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
-          <Text style={styles.centerText}>Loading stories...</Text>
+          <Text style={styles.centerText}>
+            Loading stories...
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar style="light" />
 
       <FlatList
+        ref={listRef}
         style={styles.container}
         data={feedItems}
         keyExtractor={keyExtractor}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={() => loadFirstPage(true)}
+            onRefresh={() => void loadFirstPage("manual")}
           />
         }
+        onScroll={handleScroll}
+        scrollEventThrottle={100}
         onEndReached={loadMore}
         onEndReachedThreshold={0.45}
         contentContainerStyle={[
           styles.listContent,
-          feedItems.length === 0 && styles.emptyListContent,
+          feedItems.length === 0 &&
+            styles.emptyListContent,
         ]}
         initialNumToRender={5}
         maxToRenderPerBatch={5}
         updateCellsBatchingPeriod={50}
         windowSize={7}
-        removeClippedSubviews
+        removeClippedSubviews={false}
+        maintainVisibleContentPosition={{
+          minIndexForVisible: 0,
+        }}
         ListHeaderComponent={renderHeader}
         ListFooterComponent={renderFooter}
         ListEmptyComponent={renderEmpty}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
       />
+
+      {showBackToTop ? (
+        <Pressable
+          style={styles.backToTopButton}
+          onPress={scrollToTop}
+          accessibilityRole="button"
+          accessibilityLabel="Back to top"
+        >
+          <Ionicons
+            name="arrow-up"
+            size={18}
+            color="#fff"
+          />
+          <Text style={styles.backToTopText}>
+            Top
+          </Text>
+        </Pressable>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -516,133 +1027,100 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   header: {
-    alignItems: "center",
     marginBottom: 18,
   },
-  logoText: {
+  headerTitle: {
     color: "#111",
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: "900",
-  },
-  feedTitle: {
-    color: "#666",
-    fontSize: 16,
-    fontWeight: "800",
-    marginTop: 4,
-    textTransform: "uppercase",
-  },
-  centerState: {
-    alignItems: "center",
-    backgroundColor: "#f6f6f6",
-    flex: 1,
-    justifyContent: "center",
-    padding: 24,
+    lineHeight: 34,
   },
   centerText: {
     color: "#666",
     fontSize: 15,
+    lineHeight: 22,
     marginTop: 10,
     textAlign: "center",
-  },
-  emptySubtext: {
-    color: "#777",
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 8,
-    maxWidth: 280,
-    textAlign: "center",
-  },
-  browseButton: {
-    backgroundColor: "#b00020",
-    borderRadius: 999,
-    marginTop: 18,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  browseButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "800",
   },
   errorBox: {
     backgroundColor: "#fdecec",
     borderColor: "#f4b4b4",
     borderRadius: 12,
     borderWidth: 1,
-    marginBottom: 14,
+    marginTop: 12,
     padding: 12,
   },
   errorText: {
     color: "#8a1f1f",
     fontSize: 14,
     fontWeight: "700",
+    lineHeight: 20,
     textAlign: "center",
   },
   card: {
     backgroundColor: "#fff",
     borderRadius: 18,
-    marginBottom: 16,
+    marginBottom: 18,
     overflow: "hidden",
     position: "relative",
   },
   image: {
     backgroundColor: "#ddd",
-    height: 210,
+    height: 220,
     width: "100%",
   },
   imagePlaceholder: {
     alignItems: "center",
-    backgroundColor: "#e9e9e9",
-    height: 150,
+    backgroundColor: "#e5e5e5",
+    height: 170,
     justifyContent: "center",
     width: "100%",
   },
   bookmarkButton: {
     alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.94)",
+    backgroundColor: "rgba(255,255,255,0.94)",
     borderRadius: 999,
-    height: 42,
+    height: 40,
     justifyContent: "center",
     position: "absolute",
     right: 12,
     top: 12,
-    width: 42,
-    zIndex: 2,
+    width: 40,
   },
   cardBody: {
-    padding: 15,
+    padding: 16,
   },
   metaRow: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 7,
+    marginBottom: 8,
   },
   category: {
     color: "#b00020",
     flexShrink: 1,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.5,
-    marginRight: 10,
+    marginRight: 12,
     textTransform: "uppercase",
   },
   date: {
     color: "#888",
-    fontSize: 11,
-    fontWeight: "600",
+    fontSize: 12,
+    flexShrink: 0,
   },
   title: {
     color: "#111",
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "900",
-    lineHeight: 25,
+    lineHeight: 28,
   },
   excerpt: {
     color: "#555",
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 8,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 9,
   },
   removeButton: {
     alignItems: "center",
@@ -651,9 +1129,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     flexDirection: "row",
-    marginTop: 13,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    marginTop: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
   },
   removeButtonText: {
     color: "#b00020",
@@ -663,11 +1141,37 @@ const styles = StyleSheet.create({
   },
   footerLoader: {
     alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 18,
   },
-  footerText: {
-    color: "#666",
+  emptyContainer: {
+    alignItems: "center",
+    flex: 1,
+    justifyContent: "center",
+    padding: 28,
+  },
+  emptyText: {
+    color: "#777",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 12,
+    textAlign: "center",
+  },
+  backToTopButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(17, 17, 17, 0.92)",
+    borderRadius: 999,
+    bottom: 18,
+    flexDirection: "row",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    position: "absolute",
+    right: 16,
+  },
+  backToTopText: {
+    color: "#fff",
     fontSize: 13,
-    marginTop: 8,
+    fontWeight: "800",
+    marginLeft: 5,
   },
 });

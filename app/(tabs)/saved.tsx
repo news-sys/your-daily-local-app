@@ -21,7 +21,7 @@ export default function SavedScreen() {
     <PostFeed
       title="Saved Stories"
       fetchPosts={fetchSavedPosts}
-      emptyMessage="No saved stories yet."
+      emptyMessage="Stories you save will appear here."
       showAds={false}
       reloadOnFocus
       onRemovePost={handleRemoveSavedPost}

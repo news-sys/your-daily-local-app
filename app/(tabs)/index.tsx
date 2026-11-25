@@ -1,10 +1,21 @@
+
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import {
+  router,
+  useFocusEffect,
+} from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Image,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,152 +23,504 @@ import {
   Text,
   View,
 } from "react-native";
-
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import RotatingAdSlot from "@/components/RotatingAdSlot";
-import { trackEvent, trackScreenView } from "@/services/analytics";
-import { getBreakingPosts, getHomepageSections } from "@/services/api";
+import {
+  trackEvent,
+  trackScreenView,
+} from "@/services/analytics";
+import {
+  getBreakingPosts,
+  getHomepageSections,
+} from "@/services/api";
 import type { HomeSection } from "@/types/HomeSection";
 import type { Post } from "@/types/Post";
+import { formatDisplayDate } from "@/utils/formatDisplayDate";
 
 const logo = require("@/assets/images/ydl-logo.png");
 
-function shouldShowAdAfterSection(section: HomeSection): boolean {
-  return section.id === "top-story" || section.id === "latest-news";
+const HOME_FOCUS_REFRESH_MS = 60 * 1000;
+const BACK_TO_TOP_THRESHOLD = 700;
+
+type HomeLoadMode = "initial" | "manual" | "background";
+
+type HomeAdPlacement =
+  | "premium-home"
+  | "featured-home"
+  | "legacy-rotation";
+
+function getAdPlacementAfterSection(
+  section: HomeSection
+): HomeAdPlacement | null {
+  if (section.id === "top-story") return "premium-home";
+  if (section.id === "latest-news") return "featured-home";
+  if (section.id === "sports") return "legacy-rotation";
+  return null;
+}
+
+function hasVisibleStories(
+  sections: HomeSection[]
+): boolean {
+  return sections.some(
+    (section) => section.posts.length > 0
+  );
+}
+
+function mergeHomeSections(
+  previousSections: HomeSection[],
+  refreshedSections: HomeSection[]
+): HomeSection[] {
+  if (previousSections.length === 0) {
+    return refreshedSections;
+  }
+
+  const previousById = new Map(
+    previousSections.map((section) => [
+      section.id,
+      section,
+    ])
+  );
+
+  return refreshedSections.map((section) => {
+    const previous = previousById.get(section.id);
+
+    if (
+      section.type !== "ad" &&
+      section.posts.length === 0 &&
+      previous &&
+      previous.posts.length > 0
+    ) {
+      return {
+        ...section,
+        posts: previous.posts,
+      };
+    }
+
+    return section;
+  });
 }
 
 export default function HomeScreen() {
-  const [sections, setSections] = useState<HomeSection[]>([]);
-  const [breakingPosts, setBreakingPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
 
-  const hasTrackedScreenView = useRef(false);
+  const [sections, setSections] =
+    useState<HomeSection[]>([]);
 
-  const loadHome = useCallback(async (refreshing = false) => {
-    try {
-      refreshing ? setIsRefreshing(true) : setIsLoading(true);
-      setErrorMessage(null);
+  const [breakingPosts, setBreakingPosts] =
+    useState<Post[]>([]);
 
-      const [homeSections, breaking] = await Promise.all([
-        getHomepageSections(),
-        getBreakingPosts(1),
-      ]);
+  const [isLoading, setIsLoading] =
+    useState(true);
 
-      setSections(homeSections);
-      setBreakingPosts(breaking.posts);
-    } catch {
-      setErrorMessage("Unable to load home feed. Pull down to try again.");
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
+  const [isRefreshing, setIsRefreshing] =
+    useState(false);
+
+  const [errorMessage, setErrorMessage] =
+    useState<string | null>(null);
+
+  const [showBackToTop, setShowBackToTop] =
+    useState(false);
+
+  const sectionsRef = useRef<HomeSection[]>([]);
+
+  const hasTrackedScreenViewRef = useRef(false);
+  const hasCompletedInitialLoadRef = useRef(false);
+  const hasReceivedInitialFocusRef = useRef(false);
+
+  const isHomeLoadingRef = useRef(false);
+  const isBreakingLoadingRef = useRef(false);
+
+  const lastRefreshRef = useRef(0);
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const shouldShow =
+        event.nativeEvent.contentOffset.y >=
+        BACK_TO_TOP_THRESHOLD;
+
+      setShowBackToTop((current) =>
+        current === shouldShow
+          ? current
+          : shouldShow
+      );
+    },
+    []
+  );
+
+  const scrollToTop = useCallback(() => {
+    scrollRef.current?.scrollTo({
+      y: 0,
+      animated: true,
+    });
   }, []);
+
+  const loadBreaking = useCallback(
+    async (mode: HomeLoadMode = "initial") => {
+      if (isBreakingLoadingRef.current) {
+        return;
+      }
+
+      isBreakingLoadingRef.current = true;
+
+      const forceRefresh = mode !== "initial";
+
+      try {
+        const breaking = await getBreakingPosts(
+          1,
+          { forceRefresh }
+        );
+
+        setBreakingPosts(breaking.posts);
+      } catch (error) {
+        console.warn(
+          "[Home] Breaking news refresh failed:",
+          error
+        );
+
+        // Breaking news is supplemental.
+        // Do not block the Home feed or erase
+        // previously loaded breaking stories.
+      } finally {
+        isBreakingLoadingRef.current = false;
+      }
+    },
+    []
+  );
+
+  const loadHome = useCallback(
+    async (mode: HomeLoadMode = "initial") => {
+      if (isHomeLoadingRef.current) {
+        return;
+      }
+
+      isHomeLoadingRef.current = true;
+
+      const forceRefresh = mode !== "initial";
+
+      try {
+        if (mode === "initial") {
+          setIsLoading(true);
+        } else if (mode === "manual") {
+          setIsRefreshing(true);
+        }
+
+        if (mode !== "background") {
+          setErrorMessage(null);
+        }
+
+        const homeSections =
+          await getHomepageSections({
+            forceRefresh,
+          });
+
+        const mergedSections =
+          mergeHomeSections(
+            sectionsRef.current,
+            homeSections
+          );
+
+        if (hasVisibleStories(mergedSections)) {
+          sectionsRef.current = mergedSections;
+          setSections(mergedSections);
+
+          setErrorMessage(null);
+
+          lastRefreshRef.current = Date.now();
+          hasCompletedInitialLoadRef.current = true;
+        } else {
+          console.warn(
+            "[Home] Request returned no visible stories."
+          );
+
+          if (
+            !hasVisibleStories(
+              sectionsRef.current
+            ) &&
+            mode !== "background"
+          ) {
+            setErrorMessage(
+              "Unable to load the latest Home feed. Pull down to try again."
+            );
+          }
+        }
+      } catch (error) {
+        console.warn(
+          "[Home] Feed request failed:",
+          error
+        );
+
+        if (
+          mode !== "background" &&
+          !hasVisibleStories(
+            sectionsRef.current
+          )
+        ) {
+          setErrorMessage(
+            "Unable to load the latest Home feed. Pull down to try again."
+          );
+        }
+      } finally {
+        isHomeLoadingRef.current = false;
+
+        if (mode === "initial") {
+          setIsLoading(false);
+        }
+
+        if (mode === "manual") {
+          setIsRefreshing(false);
+        }
+      }
+    },
+    []
+  );
+
+  const refreshHomeAndBreaking = useCallback(
+    async (mode: HomeLoadMode) => {
+      await Promise.all([
+        loadHome(mode),
+        loadBreaking(mode),
+      ]);
+    },
+    [loadBreaking, loadHome]
+  );
 
   useEffect(() => {
-    if (!hasTrackedScreenView.current) {
+    if (!hasTrackedScreenViewRef.current) {
       trackScreenView("home");
-      hasTrackedScreenView.current = true;
+      hasTrackedScreenViewRef.current = true;
     }
 
-    loadHome();
-  }, [loadHome]);
+    async function startHome(): Promise<void> {
+      await Promise.all([
+        loadHome("initial"),
+        loadBreaking("initial"),
+      ]);
 
-  const openBreakingFeed = useCallback(() => {
-    trackEvent("screen_view", {
-      screenName: "home_breaking_bar_tap",
-      destination: "breaking",
+      void refreshHomeAndBreaking("background");
+    }
+
+    void startHome();
+  }, [
+    loadHome,
+    loadBreaking,
+    refreshHomeAndBreaking,
+  ]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasReceivedInitialFocusRef.current) {
+        hasReceivedInitialFocusRef.current = true;
+        return;
+      }
+
+      if (!hasCompletedInitialLoadRef.current) {
+        return;
+      }
+
+      const timeSinceRefresh =
+        Date.now() - lastRefreshRef.current;
+
+      if (
+        timeSinceRefresh >=
+        HOME_FOCUS_REFRESH_MS
+      ) {
+        void refreshHomeAndBreaking(
+          "background"
+        );
+      }
+    }, [refreshHomeAndBreaking])
+  );
+
+  const openBreakingStory = useCallback(() => {
+    const breakingStory = breakingPosts[0];
+
+    if (!breakingStory) {
+      return;
+    }
+
+    trackEvent("article_open", {
+      source: "home_breaking_bar_tap",
+      postId: breakingStory.id,
+      title: breakingStory.title,
     });
 
-    router.push("/breaking");
-  }, []);
+    router.push({
+      pathname: "/(tabs)/article",
+      params: {
+        id: String(breakingStory.id),
+        fresh: "1",
+        source: "breaking",
+      },
+    });
+  }, [breakingPosts]);
 
-  if (isLoading) {
+  if (isLoading && sections.length === 0) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={["top", "left", "right"]}
+      >
         <StatusBar style="light" />
 
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" />
-          <Text style={styles.centerText}>Loading Your Daily Local...</Text>
+          <Image
+            source={logo}
+            style={styles.loadingLogo}
+            resizeMode="contain"
+          />
+
+          <ActivityIndicator size="small" />
+
+          <Text style={styles.centerText}>
+            Loading Your Daily Local...
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["top", "left", "right"]}
+    >
       <StatusBar style="light" />
 
       <ScrollView
+        ref={scrollRef}
         style={styles.container}
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={() => loadHome(true)}
+            onRefresh={() =>
+              void refreshHomeAndBreaking("manual")
+            }
           />
         }
+        onScroll={handleScroll}
+        scrollEventThrottle={100}
       >
         <View style={styles.header}>
           <Pressable
             style={styles.settingsButton}
-            onPress={() => router.push("/settings")}
+            onPress={() =>
+              router.push("/settings")
+            }
           >
-            <Ionicons name="settings-outline" size={24} color="#666" />
+            <Ionicons
+              name="settings-outline"
+              size={24}
+              color="#666"
+            />
           </Pressable>
 
-          <Image source={logo} style={styles.logo} resizeMode="contain" />
+          <Image
+            source={logo}
+            style={styles.logo}
+            resizeMode="contain"
+          />
 
           <Text style={styles.tagline}>
             The news you need, when you need it
           </Text>
         </View>
 
-        <RotatingAdSlot placement="home-top" />
+        <RotatingAdSlot
+          placement="presenting-home"
+          sponsorLabel="YDL App powered by"
+        />
 
         {errorMessage ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{errorMessage}</Text>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
           </View>
         ) : null}
 
         {breakingPosts.length > 0 &&
         breakingPosts[0]?.category === "Breaking" ? (
-          <Pressable style={styles.breakingBar} onPress={openBreakingFeed}>
-            <Text style={styles.breakingLabel}>Breaking</Text>
+          <Pressable
+            style={styles.breakingBar}
+            onPress={openBreakingStory}
+          >
+            <Text style={styles.breakingLabel}>
+              Breaking
+            </Text>
 
-            <Text style={styles.breakingText} numberOfLines={1}>
+            <Text
+              style={styles.breakingText}
+              numberOfLines={1}
+            >
               {breakingPosts[0].title}
             </Text>
+
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color="#fff"
+            />
           </Pressable>
         ) : null}
 
-        {sections.map((section) => (
-          <View key={section.id}>
-            {section.type === "ad" ? null : section.type === "lead" ? (
-              <LeadSection section={section} />
-            ) : (
-              <ListSection section={section} />
-            )}
+        {sections.map((section) => {
+          const adPlacement =
+            getAdPlacementAfterSection(section);
 
-            {shouldShowAdAfterSection(section) ? (
-              <RotatingAdSlot placement="home-between-sections" />
-            ) : null}
-          </View>
-        ))}
+          return (
+            <View key={section.id}>
+              {section.type === "ad" ? null :
+               section.type === "lead" ? (
+                <LeadSection section={section} />
+              ) : (
+                <ListSection section={section} />
+              )}
+
+              {adPlacement ? (
+                <RotatingAdSlot
+                  placement={adPlacement}
+                />
+              ) : null}
+            </View>
+          );
+        })}
       </ScrollView>
+
+      {showBackToTop ? (
+        <Pressable
+          style={styles.backToTopButton}
+          onPress={scrollToTop}
+          accessibilityRole="button"
+          accessibilityLabel="Back to top"
+        >
+          <Ionicons
+            name="arrow-up"
+            size={18}
+            color="#fff"
+          />
+
+          <Text style={styles.backToTopText}>
+            Top
+          </Text>
+        </Pressable>
+      ) : null}
     </SafeAreaView>
   );
 }
 
-function LeadSection({ section }: { section: HomeSection }) {
+function LeadSection({
+  section,
+}: {
+  section: HomeSection;
+}) {
   const leadStory = section.posts[0];
 
   const openLeadStory = useCallback(() => {
-    if (!leadStory) return;
+    if (!leadStory) {
+      return;
+    }
 
     trackEvent("article_open", {
       source: "home_lead_section",
@@ -169,26 +532,53 @@ function LeadSection({ section }: { section: HomeSection }) {
 
     router.push({
       pathname: "/(tabs)/article",
-      params: { id: String(leadStory.id) },
+      params: {
+        id: String(leadStory.id),
+        fresh: "1",
+      },
     });
-  }, [leadStory, section.id, section.title]);
+  }, [
+    leadStory,
+    section.id,
+    section.title,
+  ]);
 
-  if (!leadStory) return null;
+  if (!leadStory) {
+    return null;
+  }
 
   return (
     <>
-      <Text style={styles.mainSectionTitle}>{section.title}</Text>
+      <Text style={styles.mainSectionTitle}>
+        {section.title}
+      </Text>
 
-      <Pressable style={styles.leadCard} onPress={openLeadStory}>
+      <Pressable
+        style={styles.leadCard}
+        onPress={openLeadStory}
+      >
         {leadStory.image ? (
-          <Image source={{ uri: leadStory.image }} style={styles.leadImage} />
+          <Image
+            source={{ uri: leadStory.image }}
+            style={styles.leadImage}
+          />
         ) : null}
 
         <View style={styles.leadBody}>
-          <Text style={styles.leadTitle}>{leadStory.title}</Text>
+          <Text style={styles.leadTitle}>
+            {leadStory.title}
+          </Text>
 
           {leadStory.excerpt ? (
-            <Text style={styles.excerpt}>{leadStory.excerpt}</Text>
+            <Text style={styles.excerpt}>
+              {leadStory.excerpt}
+            </Text>
+          ) : null}
+
+          {leadStory.date ? (
+            <Text style={styles.date}>
+              {formatDisplayDate(leadStory.date)}
+            </Text>
           ) : null}
         </View>
       </Pressable>
@@ -196,7 +586,11 @@ function LeadSection({ section }: { section: HomeSection }) {
   );
 }
 
-function ListSection({ section }: { section: HomeSection }) {
+function ListSection({
+  section,
+}: {
+  section: HomeSection;
+}) {
   const openSection = useCallback(() => {
     trackEvent("screen_view", {
       screenName: "home_view_all_tap",
@@ -207,9 +601,15 @@ function ListSection({ section }: { section: HomeSection }) {
 
     router.push({
       pathname: "/(tabs)/category/[slug]",
-      params: { slug: section.slug },
+      params: {
+        slug: section.slug,
+      },
     });
-  }, [section.id, section.slug, section.title]);
+  }, [
+    section.id,
+    section.slug,
+    section.title,
+  ]);
 
   const openStory = useCallback(
     (post: Post) => {
@@ -223,21 +623,30 @@ function ListSection({ section }: { section: HomeSection }) {
 
       router.push({
         pathname: "/(tabs)/article",
-        params: { id: String(post.id) },
+        params: {
+          id: String(post.id),
+          fresh: "1",
+        },
       });
     },
     [section.id, section.title]
   );
 
-  if (section.posts.length === 0) return null;
+  if (section.posts.length === 0) {
+    return null;
+  }
 
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeaderRow}>
-        <Text style={styles.sectionTitle}>{section.title}</Text>
+        <Text style={styles.sectionTitle}>
+          {section.title}
+        </Text>
 
         <Pressable onPress={openSection}>
-          <Text style={styles.viewAllText}>View All</Text>
+          <Text style={styles.viewAllText}>
+            View All
+          </Text>
         </Pressable>
       </View>
 
@@ -248,17 +657,28 @@ function ListSection({ section }: { section: HomeSection }) {
           onPress={() => openStory(post)}
         >
           {post.image ? (
-            <Image source={{ uri: post.image }} style={styles.thumbnail} />
+            <Image
+              source={{ uri: post.image }}
+              style={styles.thumbnail}
+            />
           ) : null}
 
           <View style={styles.storyText}>
             {post.category ? (
-              <Text style={styles.category}>{post.category}</Text>
+              <Text style={styles.category}>
+                {post.category}
+              </Text>
             ) : null}
 
-            <Text style={styles.storyTitle}>{post.title}</Text>
+            <Text style={styles.storyTitle}>
+              {post.title}
+            </Text>
 
-            {post.date ? <Text style={styles.date}>{post.date}</Text> : null}
+            {post.date ? (
+              <Text style={styles.date}>
+                {formatDisplayDate(post.date)}
+              </Text>
+            ) : null}
           </View>
         </Pressable>
       ))}
@@ -279,6 +699,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     padding: 24,
+  },
+  loadingLogo: {
+    height: 72,
+    marginBottom: 18,
+    width: 260,
   },
   container: {
     backgroundColor: "#f6f6f6",
@@ -354,6 +779,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: "800",
+    marginRight: 6,
   },
   mainSectionTitle: {
     color: "#111",
@@ -438,5 +864,22 @@ const styles = StyleSheet.create({
     color: "#888",
     fontSize: 12,
     marginTop: 8,
+  },
+  backToTopButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(17, 17, 17, 0.92)",
+    borderRadius: 999,
+    bottom: 18,
+    flexDirection: "row",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    position: "absolute",
+    right: 16,
+  },
+  backToTopText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 5,
   },
 });

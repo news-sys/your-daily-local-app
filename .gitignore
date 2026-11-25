@@ -50,3 +50,4 @@ assets/images/original-assets/
 # Firebase Admin SDK backups
 firebase-adminsdk.json
 *-firebase-adminsdk-*.json
+.env.local

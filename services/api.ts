@@ -1,80 +1,121 @@
 import { DEV_CONFIG } from "@/config/dev";
 import type { HomeSection } from "@/types/HomeSection";
-import type { PaginatedPosts, Post } from "@/types/Post";
+import type {
+  ContentRequestOptions,
+  PaginatedPosts,
+  Post,
+} from "@/types/Post";
 
 import * as mockProvider from "./providers/mockProvider";
 import * as wordpressProvider from "./providers/wordpressProvider";
 
-const primaryProvider =
-  DEV_CONFIG.dataProvider === "wordpress" ? wordpressProvider : mockProvider;
+const useMockProvider =
+  DEV_CONFIG.dataProvider === "mock";
 
-async function withFallback<T>(
-  request: () => Promise<T>,
-  fallback: () => Promise<T>
-): Promise<T> {
-  try {
-    return await request();
-  } catch {
-    return fallback();
+export async function getTopStories(
+  page = 1
+): Promise<PaginatedPosts> {
+  if (useMockProvider) {
+    return mockProvider.getTopStories(page);
   }
+
+  return wordpressProvider.getTopStories(page);
 }
 
-export async function getTopStories(page = 1): Promise<PaginatedPosts> {
-  return withFallback(
-    () => primaryProvider.getTopStories(page),
-    () => mockProvider.getTopStories(page)
+export async function getNewsPosts(
+  page = 1,
+  options: ContentRequestOptions = {}
+): Promise<PaginatedPosts> {
+  if (useMockProvider) {
+    return mockProvider.getNewsPosts(page);
+  }
+
+  return wordpressProvider.getNewsPosts(
+    page,
+    options
   );
 }
 
-export async function getNewsPosts(page = 1): Promise<PaginatedPosts> {
-  return withFallback(
-    () => primaryProvider.getNewsPosts(page),
-    () => mockProvider.getNewsPosts(page)
+export async function getSportsPosts(
+  page = 1,
+  options: ContentRequestOptions = {}
+): Promise<PaginatedPosts> {
+  if (useMockProvider) {
+    return mockProvider.getSportsPosts(page);
+  }
+
+  return wordpressProvider.getSportsPosts(
+    page,
+    options
   );
 }
 
-export async function getSportsPosts(page = 1): Promise<PaginatedPosts> {
-  return withFallback(
-    () => primaryProvider.getSportsPosts(page),
-    () => mockProvider.getSportsPosts(page)
+export async function getBreakingPosts(
+  page = 1,
+  options: ContentRequestOptions = {}
+): Promise<PaginatedPosts> {
+  if (useMockProvider) {
+    return mockProvider.getBreakingPosts(page);
+  }
+
+  return wordpressProvider.getBreakingPosts(
+    page,
+    options
   );
 }
 
-export async function getBreakingPosts(page = 1): Promise<PaginatedPosts> {
-  return withFallback(
-    () => primaryProvider.getBreakingPosts(page),
-    () => mockProvider.getBreakingPosts(page)
-  );
-}
-
-export async function getLiveVideoPosts(page = 1): Promise<PaginatedPosts> {
-  return withFallback(
-    () => wordpressProvider.getLiveVideoPosts(page),
-    () => mockProvider.getTopStories(page)
+export async function getLiveVideoPosts(
+  page = 1,
+  options: ContentRequestOptions = {}
+): Promise<PaginatedPosts> {
+  return wordpressProvider.getLiveVideoPosts(
+    page,
+    options
   );
 }
 
 export async function getPostsByCategory(
   category: string,
-  page = 1
+  page = 1,
+  options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  return withFallback(
-    () => primaryProvider.getPostsByCategory(category, page),
-    () => mockProvider.getPostsByCategory(category, page)
+  if (useMockProvider) {
+    return mockProvider.getPostsByCategory(
+      category,
+      page
+    );
+  }
+
+  return wordpressProvider.getPostsByCategory(
+    category,
+    page,
+    options
   );
 }
 
-export async function getHomepageSections(): Promise<HomeSection[]> {
-  return withFallback(
-    () => primaryProvider.getHomepageSections(),
-    () => mockProvider.getHomepageSections()
+export async function getHomepageSections(
+  options: ContentRequestOptions = {}
+): Promise<HomeSection[]> {
+  if (useMockProvider) {
+    return mockProvider.getHomepageSections();
+  }
+
+  return wordpressProvider.getHomepageSections(
+    options
   );
 }
 
-export async function getPostById(id: string): Promise<Post | undefined> {
-  return withFallback(
-    () => primaryProvider.getPostById(id),
-    () => mockProvider.getPostById(id)
+export async function getPostById(
+  id: string,
+  options: ContentRequestOptions = {}
+): Promise<Post | undefined> {
+  if (useMockProvider) {
+    return mockProvider.getPostById(id);
+  }
+
+  return wordpressProvider.getPostById(
+    id,
+    options
   );
 }
 
@@ -82,8 +123,15 @@ export async function searchPosts(
   query: string,
   page = 1
 ): Promise<PaginatedPosts> {
-  return withFallback(
-    () => primaryProvider.searchPosts(query, page),
-    () => mockProvider.searchPosts(query, page)
+  if (useMockProvider) {
+    return mockProvider.searchPosts(
+      query,
+      page
+    );
+  }
+
+  return wordpressProvider.searchPosts(
+    query,
+    page
   );
 }
