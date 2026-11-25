@@ -1,9 +1,5 @@
-
 import { Ionicons } from "@expo/vector-icons";
-import {
-  router,
-  useFocusEffect,
-} from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
   useCallback,
@@ -59,12 +55,8 @@ function getAdPlacementAfterSection(
   return null;
 }
 
-function hasVisibleStories(
-  sections: HomeSection[]
-): boolean {
-  return sections.some(
-    (section) => section.posts.length > 0
-  );
+function hasVisibleStories(sections: HomeSection[]): boolean {
+  return sections.some((section) => section.posts.length > 0);
 }
 
 function mergeHomeSections(
@@ -104,33 +96,21 @@ function mergeHomeSections(
 export default function HomeScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
-  const [sections, setSections] =
-    useState<HomeSection[]>([]);
-
-  const [breakingPosts, setBreakingPosts] =
-    useState<Post[]>([]);
-
-  const [isLoading, setIsLoading] =
-    useState(true);
-
-  const [isRefreshing, setIsRefreshing] =
-    useState(false);
-
-  const [errorMessage, setErrorMessage] =
-    useState<string | null>(null);
-
-  const [showBackToTop, setShowBackToTop] =
-    useState(false);
+  const [sections, setSections] = useState<HomeSection[]>([]);
+  const [breakingPosts, setBreakingPosts] = useState<Post[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    null
+  );
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   const sectionsRef = useRef<HomeSection[]>([]);
-
   const hasTrackedScreenViewRef = useRef(false);
   const hasCompletedInitialLoadRef = useRef(false);
   const hasReceivedInitialFocusRef = useRef(false);
-
   const isHomeLoadingRef = useRef(false);
   const isBreakingLoadingRef = useRef(false);
-
   const lastRefreshRef = useRef(0);
 
   const handleScroll = useCallback(
@@ -140,9 +120,7 @@ export default function HomeScreen() {
         BACK_TO_TOP_THRESHOLD;
 
       setShowBackToTop((current) =>
-        current === shouldShow
-          ? current
-          : shouldShow
+        current === shouldShow ? current : shouldShow
       );
     },
     []
@@ -157,19 +135,15 @@ export default function HomeScreen() {
 
   const loadBreaking = useCallback(
     async (mode: HomeLoadMode = "initial") => {
-      if (isBreakingLoadingRef.current) {
-        return;
-      }
+      if (isBreakingLoadingRef.current) return;
 
       isBreakingLoadingRef.current = true;
-
       const forceRefresh = mode !== "initial";
 
       try {
-        const breaking = await getBreakingPosts(
-          1,
-          { forceRefresh }
-        );
+        const breaking = await getBreakingPosts(1, {
+          forceRefresh,
+        });
 
         setBreakingPosts(breaking.posts);
       } catch (error) {
@@ -178,9 +152,8 @@ export default function HomeScreen() {
           error
         );
 
-        // Breaking news is supplemental.
-        // Do not block the Home feed or erase
-        // previously loaded breaking stories.
+        // Breaking news must not block the Home feed.
+        // Keep previously loaded stories if the request fails.
       } finally {
         isBreakingLoadingRef.current = false;
       }
@@ -190,12 +163,9 @@ export default function HomeScreen() {
 
   const loadHome = useCallback(
     async (mode: HomeLoadMode = "initial") => {
-      if (isHomeLoadingRef.current) {
-        return;
-      }
+      if (isHomeLoadingRef.current) return;
 
       isHomeLoadingRef.current = true;
-
       const forceRefresh = mode !== "initial";
 
       try {
@@ -209,21 +179,18 @@ export default function HomeScreen() {
           setErrorMessage(null);
         }
 
-        const homeSections =
-          await getHomepageSections({
-            forceRefresh,
-          });
+        const homeSections = await getHomepageSections({
+          forceRefresh,
+        });
 
-        const mergedSections =
-          mergeHomeSections(
-            sectionsRef.current,
-            homeSections
-          );
+        const mergedSections = mergeHomeSections(
+          sectionsRef.current,
+          homeSections
+        );
 
         if (hasVisibleStories(mergedSections)) {
           sectionsRef.current = mergedSections;
           setSections(mergedSections);
-
           setErrorMessage(null);
 
           lastRefreshRef.current = Date.now();
@@ -234,9 +201,7 @@ export default function HomeScreen() {
           );
 
           if (
-            !hasVisibleStories(
-              sectionsRef.current
-            ) &&
+            !hasVisibleStories(sectionsRef.current) &&
             mode !== "background"
           ) {
             setErrorMessage(
@@ -245,16 +210,11 @@ export default function HomeScreen() {
           }
         }
       } catch (error) {
-        console.warn(
-          "[Home] Feed request failed:",
-          error
-        );
+        console.warn("[Home] Feed request failed:", error);
 
         if (
           mode !== "background" &&
-          !hasVisibleStories(
-            sectionsRef.current
-          )
+          !hasVisibleStories(sectionsRef.current)
         ) {
           setErrorMessage(
             "Unable to load the latest Home feed. Pull down to try again."
@@ -291,21 +251,11 @@ export default function HomeScreen() {
       hasTrackedScreenViewRef.current = true;
     }
 
-    async function startHome(): Promise<void> {
-      await Promise.all([
-        loadHome("initial"),
-        loadBreaking("initial"),
-      ]);
-
-      void refreshHomeAndBreaking("background");
-    }
-
-    void startHome();
-  }, [
-    loadHome,
-    loadBreaking,
-    refreshHomeAndBreaking,
-  ]);
+    // Start both requests independently.
+    // Do not repeat them immediately after initial loading.
+    void loadHome("initial");
+    void loadBreaking("initial");
+  }, [loadHome, loadBreaking]);
 
   useFocusEffect(
     useCallback(() => {
@@ -321,13 +271,8 @@ export default function HomeScreen() {
       const timeSinceRefresh =
         Date.now() - lastRefreshRef.current;
 
-      if (
-        timeSinceRefresh >=
-        HOME_FOCUS_REFRESH_MS
-      ) {
-        void refreshHomeAndBreaking(
-          "background"
-        );
+      if (timeSinceRefresh >= HOME_FOCUS_REFRESH_MS) {
+        void refreshHomeAndBreaking("background");
       }
     }, [refreshHomeAndBreaking])
   );
@@ -335,9 +280,7 @@ export default function HomeScreen() {
   const openBreakingStory = useCallback(() => {
     const breakingStory = breakingPosts[0];
 
-    if (!breakingStory) {
-      return;
-    }
+    if (!breakingStory) return;
 
     trackEvent("article_open", {
       source: "home_breaking_bar_tap",
@@ -405,9 +348,7 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <Pressable
             style={styles.settingsButton}
-            onPress={() =>
-              router.push("/settings")
-            }
+            onPress={() => router.push("/settings")}
           >
             <Ionicons
               name="settings-outline"
@@ -471,17 +412,15 @@ export default function HomeScreen() {
 
           return (
             <View key={section.id}>
-              {section.type === "ad" ? null :
-               section.type === "lead" ? (
+              {section.type === "ad" ? null : section.type ===
+                "lead" ? (
                 <LeadSection section={section} />
               ) : (
                 <ListSection section={section} />
               )}
 
               {adPlacement ? (
-                <RotatingAdSlot
-                  placement={adPlacement}
-                />
+                <RotatingAdSlot placement={adPlacement} />
               ) : null}
             </View>
           );
@@ -501,9 +440,7 @@ export default function HomeScreen() {
             color="#fff"
           />
 
-          <Text style={styles.backToTopText}>
-            Top
-          </Text>
+          <Text style={styles.backToTopText}>Top</Text>
         </Pressable>
       ) : null}
     </SafeAreaView>
@@ -518,9 +455,7 @@ function LeadSection({
   const leadStory = section.posts[0];
 
   const openLeadStory = useCallback(() => {
-    if (!leadStory) {
-      return;
-    }
+    if (!leadStory) return;
 
     trackEvent("article_open", {
       source: "home_lead_section",
@@ -537,15 +472,9 @@ function LeadSection({
         fresh: "1",
       },
     });
-  }, [
-    leadStory,
-    section.id,
-    section.title,
-  ]);
+  }, [leadStory, section.id, section.title]);
 
-  if (!leadStory) {
-    return null;
-  }
+  if (!leadStory) return null;
 
   return (
     <>
@@ -605,11 +534,7 @@ function ListSection({
         slug: section.slug,
       },
     });
-  }, [
-    section.id,
-    section.slug,
-    section.title,
-  ]);
+  }, [section.id, section.slug, section.title]);
 
   const openStory = useCallback(
     (post: Post) => {
@@ -632,9 +557,7 @@ function ListSection({
     [section.id, section.title]
   );
 
-  if (section.posts.length === 0) {
-    return null;
-  }
+  if (section.posts.length === 0) return null;
 
   return (
     <View style={styles.section}>
