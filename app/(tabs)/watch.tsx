@@ -1,4 +1,3 @@
-
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
@@ -13,6 +12,7 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Linking,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -27,7 +27,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
-import { trackEvent, trackScreenView } from "@/services/analytics";
+import {
+  trackEvent,
+  trackScreenView,
+} from "@/services/analytics";
 import { getLiveVideoPosts } from "@/services/api";
 import type { Post } from "@/types/Post";
 import { formatDisplayDate } from "@/utils/formatDisplayDate";
@@ -51,16 +54,13 @@ function getYouTubeUrl(
   for (const source of sources) {
     if (!source) continue;
 
-    const decodedSource = source
+    const decoded = source
       .replace(/&amp;/gi, "&")
       .replace(/&#038;/gi, "&");
 
     for (const pattern of patterns) {
-      const match = decodedSource.match(pattern);
-
-      if (match?.[0]) {
-        return match[0];
-      }
+      const match = decoded.match(pattern);
+      if (match?.[0]) return match[0];
     }
   }
 
@@ -78,10 +78,7 @@ function getYouTubeVideoId(url: string): string | null {
 
   for (const pattern of patterns) {
     const match = url.match(pattern);
-
-    if (match?.[1]) {
-      return match[1];
-    }
+    if (match?.[1]) return match[1];
   }
 
   return null;
@@ -104,8 +101,12 @@ function getPostYouTubeUrl(post: Post): string | null {
 
 const VideoPlayer = memo(function VideoPlayer({
   post,
+  isPlaying,
+  onPlay,
 }: {
   post: Post;
+  isPlaying: boolean;
+  onPlay: (postId: number) => void;
 }) {
   const youtubeUrl = useMemo(
     () => getPostYouTubeUrl(post),
@@ -120,7 +121,7 @@ const VideoPlayer = memo(function VideoPlayer({
   const embedUrl = useMemo(() => {
     if (!videoId) return null;
 
-    return `https://www.youtube.com/embed/${videoId}?playsinline=1&rel=0&modestbranding=1`;
+    return `https://www.youtube.com/embed/${videoId}?playsinline=1&rel=0&autoplay=1`;
   }, [videoId]);
 
   const youtubeWatchUrl = useMemo(() => {
@@ -241,23 +242,52 @@ const VideoPlayer = memo(function VideoPlayer({
   return (
     <View style={styles.playerBlock}>
       <View style={styles.videoWrapper}>
-        <WebView
-          source={{
-            uri: embedUrl,
-            headers: {
-              Referer: "https://yourdailylocal.com",
-            },
-          }}
-          style={styles.videoWebView}
-          allowsFullscreenVideo
-          allowsInlineMediaPlayback
-          javaScriptEnabled
-          domStorageEnabled
-          mediaPlaybackRequiresUserAction
-          originWhitelist={["*"]}
-          scrollEnabled={false}
-          setSupportMultipleWindows={false}
-        />
+        {isPlaying ? (
+          <WebView
+            source={{
+              uri: embedUrl,
+              headers: {
+                Referer: "https://yourdailylocal.com",
+              },
+            }}
+            style={styles.videoWebView}
+            allowsFullscreenVideo
+            allowsInlineMediaPlayback
+            javaScriptEnabled
+            domStorageEnabled
+            mediaPlaybackRequiresUserAction={false}
+            originWhitelist={["*"]}
+            scrollEnabled={false}
+            setSupportMultipleWindows={false}
+          />
+        ) : (
+          <Pressable
+            style={styles.videoPreview}
+            onPress={() => onPlay(post.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Play ${post.title}`}
+          >
+            <Image
+              source={{
+                uri:
+                  post.image ||
+                  `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+              }}
+              style={StyleSheet.absoluteFillObject}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              recyclingKey={String(post.id)}
+            />
+
+            <View style={styles.playBadge}>
+              <Ionicons
+                name="play"
+                size={34}
+                color="#fff"
+              />
+            </View>
+          </Pressable>
+        )}
       </View>
 
       <Text style={styles.featuredTitle}>
@@ -396,14 +426,42 @@ const ReplayCard = memo(function ReplayCard({
 export default function WatchScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
+  const [playingPostId, setPlayingPostId] = useState<
+    number | null
+  >(null);
+
+  const playVideo = useCallback((postId: number) => {
+    setPlayingPostId(postId);
+  }, []);
+
+  // Stop the embedded player when navigating away.
+  useFocusEffect(
+    useCallback(() => {
+      return () => setPlayingPostId(null);
+    }, [])
+  );
+
+  // Stop playback when the app leaves the foreground.
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      "change",
+      (state) => {
+        if (state !== "active") {
+          setPlayingPostId(null);
+        }
+      }
+    );
+
+    return () => subscription.remove();
+  }, []);
+
   const [videos, setVideos] = useState<Post[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<
     string | null
   >(null);
-  const [showBackToTop, setShowBackToTop] =
-    useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   const isLoadingRef = useRef(false);
   const videosRef = useRef<Post[]>([]);
@@ -443,9 +501,7 @@ export default function WatchScreen() {
 
   const loadVideos = useCallback(
     async (mode: WatchLoadMode = "initial") => {
-      if (isLoadingRef.current) {
-        return;
-      }
+      if (isLoadingRef.current) return;
 
       isLoadingRef.current = true;
       const forceRefresh = mode !== "initial";
@@ -472,8 +528,7 @@ export default function WatchScreen() {
           forceRefresh,
         });
 
-        // Do not erase videos already on screen when a
-        // temporary refresh returns an empty response.
+        // Preserve visible videos if a refresh returns empty.
         if (
           result.posts.length > 0 ||
           videosRef.current.length === 0
@@ -482,9 +537,7 @@ export default function WatchScreen() {
           setVideos(result.posts);
         }
 
-        // A successful request clears any previous error.
         setErrorMessage(null);
-
         lastRefreshRef.current = Date.now();
         hasCompletedInitialLoadRef.current = true;
       } catch (error) {
@@ -493,8 +546,6 @@ export default function WatchScreen() {
           error
         );
 
-        // Keep previously loaded videos visible during
-        // temporary network or WordPress API failures.
         if (
           mode !== "background" &&
           videosRef.current.length === 0
@@ -521,12 +572,8 @@ export default function WatchScreen() {
   useEffect(() => {
     trackScreenView("watch");
 
-    async function startWatch(): Promise<void> {
-      await loadVideos("initial");
-      void loadVideos("background");
-    }
-
-    void startWatch();
+    // One initial request; later refreshes are deliberate.
+    void loadVideos("initial");
   }, [loadVideos]);
 
   useFocusEffect(
@@ -591,20 +638,16 @@ export default function WatchScreen() {
           <Text style={styles.logoText}>
             Your Daily Local
           </Text>
-          <Text style={styles.feedTitle}>
-            Watch
-          </Text>
+          <Text style={styles.feedTitle}>Watch</Text>
         </View>
 
         <View style={styles.heroCard}>
           <Text style={styles.heroEyebrow}>
             Live &amp; Featured Video
           </Text>
-
           <Text style={styles.heroTitle}>
             Morning Pick-Up and Your Daily Local broadcasts
           </Text>
-
           <Text style={styles.heroText}>
             Watch live shows, community coverage,
             government meetings, and recent Your Daily
@@ -632,6 +675,8 @@ export default function WatchScreen() {
               <VideoPlayer
                 key={String(post.id)}
                 post={post}
+                isPlaying={playingPostId === post.id}
+                onPlay={playVideo}
               />
             ))}
           </>
@@ -642,11 +687,9 @@ export default function WatchScreen() {
               size={38}
               color="#999"
             />
-
             <Text style={styles.linkCardTitle}>
               No videos available
             </Text>
-
             <Text style={styles.linkCardText}>
               Live Video posts from YourDailyLocal.com
               will appear here.
@@ -682,10 +725,7 @@ export default function WatchScreen() {
             size={18}
             color="#fff"
           />
-
-          <Text style={styles.backToTopText}>
-            Top
-          </Text>
+          <Text style={styles.backToTopText}>Top</Text>
         </Pressable>
       ) : null}
     </SafeAreaView>
@@ -693,6 +733,20 @@ export default function WatchScreen() {
 }
 
 const styles = StyleSheet.create({
+  videoPreview: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111",
+  },
+  playBadge: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 40,
+    width: 72,
+    height: 72,
+    backgroundColor: "rgba(0,0,0,0.7)",
+  },
   safeArea: {
     backgroundColor: "#111",
     flex: 1,
