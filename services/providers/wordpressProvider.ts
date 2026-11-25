@@ -1,12 +1,10 @@
-
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
 import type { HomeSection } from "@/types/HomeSection";
 import type {
   ContentRequestOptions,
   PaginatedPosts,
   Post,
 } from "@/types/Post";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const WORDPRESS_BASE_URL =
   "https://yourdailylocal.com/wp-json/wp/v2";
@@ -18,45 +16,27 @@ const CATEGORY_IDS = {
   liveVideo: 1135,
 };
 
-const CATEGORY_SLUGS = {
-  forestCountyNews: "forestcountynews",
-};
-
-const TAG_SLUGS = {
-  appTopStory: "app",
-};
-
 const PAGE_SIZE = 5;
 const SEARCH_PAGE_SIZE = 20;
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const STALE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const OFFLINE_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15000;
-const BREAKING_WINDOW_HOURS = 48;
 const STORAGE_CACHE_PREFIX = "ydl_wp_cache_";
+const MAX_MEMORY_ENTRIES = 200;
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
-const RETRYABLE_STATUSES = new Set([
-  429,
-  500,
-  502,
-  503,
-  504,
-]);
+const POST_FIELDS =
+  "id,date,modified,link,title.rendered,excerpt.rendered,content.rendered,categories,tags,_links,_embedded";
 
 type CacheEntry<T> = {
   data: T;
   timestamp: number;
 };
 
-type WordPressCategory = {
-  id: number;
-  name: string;
-  slug: string;
-};
-
-type WordPressTag = {
-  id: number;
-  name: string;
-  slug: string;
+type MediaSize = {
+  source_url?: string;
+  width?: number;
+  height?: number;
 };
 
 type WordPressPost = {
@@ -64,134 +44,329 @@ type WordPressPost = {
   date: string;
   modified?: string;
   link?: string;
-  sticky?: boolean;
-  title: {
-    rendered: string;
-  };
-  excerpt: {
-    rendered: string;
-  };
-  content: {
-    rendered: string;
-  };
+  title: { rendered: string };
+  excerpt?: { rendered: string };
+  content: { rendered: string };
   categories: number[];
-  tags?: number[];
   _embedded?: {
-    author?: {
-      name?: string;
-    }[];
-    "wp:featuredmedia"?: {
+    author?: Array<{ name?: string }>;
+    "wp:featuredmedia"?: Array<{
       source_url?: string;
-      caption?: {
-        rendered?: string;
+      caption?: { rendered?: string };
+      media_details?: {
+        sizes?: Record<string, MediaSize>;
       };
-    }[];
+    }>;
   };
 };
 
-type FetchPostsOptions = {
+type Query = {
   categoryId?: number | null;
   tagId?: number | null;
-  searchQuery?: string;
-  perPage?: number;
-  forceRefresh?: boolean;
+  search?: string;
+  breaking?: boolean;
 };
 
-type CachedLookup<T> = {
-  data: T;
-  isFresh: boolean;
-} | null;
+class WordPressError extends Error {
+  status: number;
+  code: string;
 
-const cache = new Map<string, CacheEntry<unknown>>();
+  constructor(status: number, code: string) {
+    super(`WordPress request failed (${status}): ${code}`);
+    this.status = status;
+    this.code = code;
+  }
+}
 
-const inFlightRequests =
-  new Map<string, Promise<unknown>>();
+const memory = new Map<string, CacheEntry<unknown>>();
+const inFlight = new Map<string, Promise<unknown>>();
+const writes = new Map<string, Promise<void>>();
+
+function remember<T>(
+  key: string,
+  entry: CacheEntry<T>
+): void {
+  memory.delete(key);
+  memory.set(key, entry);
+
+  if (memory.size > MAX_MEMORY_ENTRIES) {
+    const oldest = memory.keys().next().value;
+    if (oldest !== undefined) memory.delete(oldest);
+  }
+}
+
+function isUsable<T>(
+  entry: CacheEntry<T> | undefined
+): entry is CacheEntry<T> {
+  return Boolean(
+    entry &&
+      Number.isFinite(entry.timestamp) &&
+      Date.now() - entry.timestamp <=
+        OFFLINE_CACHE_MAX_AGE_MS
+  );
+}
+
+async function readCache<T>(
+  key: string
+): Promise<CacheEntry<T> | undefined> {
+  const existing = memory.get(key) as
+    | CacheEntry<T>
+    | undefined;
+
+  if (isUsable(existing)) return existing;
+
+  try {
+    const raw = await AsyncStorage.getItem(
+      `${STORAGE_CACHE_PREFIX}${key}`
+    );
+
+    // Another request may have updated memory during the read.
+    const latest = memory.get(key) as
+      | CacheEntry<T>
+      | undefined;
+
+    if (isUsable(latest)) return latest;
+    if (!raw) return undefined;
+
+    const parsed = JSON.parse(raw) as CacheEntry<T>;
+
+    if (
+      !parsed ||
+      !("data" in parsed) ||
+      !isUsable(parsed)
+    ) {
+      return undefined;
+    }
+
+    // Preserve the original fetch timestamp.
+    remember(key, parsed);
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCache<T>(
+  key: string,
+  data: T,
+  timestamp = Date.now()
+): void {
+  const entry = { data, timestamp };
+  remember(key, entry);
+
+  // Keep writes ordered without making screens wait for storage.
+  const previous = writes.get(key) ?? Promise.resolve();
+
+  const pending = previous
+    .then(() =>
+      AsyncStorage.setItem(
+        `${STORAGE_CACHE_PREFIX}${key}`,
+        JSON.stringify(entry)
+      )
+    )
+    .catch(() => undefined);
+
+  writes.set(key, pending);
+
+  void pending.then(() => {
+    if (writes.get(key) === pending) {
+      writes.delete(key);
+    }
+  });
+}
+
+function deduplicated<T>(
+  key: string,
+  work: () => Promise<T>
+): Promise<T> {
+  const existing = inFlight.get(key) as
+    | Promise<T>
+    | undefined;
+
+  if (existing) return existing;
+
+  const promise = work().finally(() =>
+    inFlight.delete(key)
+  );
+
+  inFlight.set(key, promise);
+  return promise;
+}
+
+async function cachedRequest<T>(
+  key: string,
+  forceRefresh: boolean,
+  work: (attempts: number) => Promise<T>
+): Promise<T> {
+  const cached = await readCache<T>(key);
+
+  if (
+    !forceRefresh &&
+    cached &&
+    Date.now() - cached.timestamp < CACHE_TTL_MS
+  ) {
+    return cached.data;
+  }
+
+  try {
+    return await deduplicated(key, async () => {
+      // Avoid an extra retry when cached content is available.
+      const value = await work(cached ? 1 : 2);
+      writeCache(key, value);
+      return value;
+    });
+  } catch (error) {
+    const transient =
+      !(error instanceof WordPressError) ||
+      RETRYABLE_STATUSES.has(error.status);
+
+    if (cached && transient) return cached.data;
+
+    throw error;
+  }
+}
+
+async function requestJson<T>(
+  url: URL,
+  attempts: number,
+  forceRefresh = false
+): Promise<{ data: T; headers: Headers }> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+
+    const timeout = setTimeout(
+      () => controller.abort(),
+      REQUEST_TIMEOUT_MS
+    );
+
+    try {
+      const response = await fetch(url.toString(), {
+        signal: controller.signal,
+        headers: forceRefresh
+          ? {
+              Accept: "application/json",
+              "Cache-Control": "no-cache",
+            }
+          : {
+              Accept: "application/json",
+            },
+      });
+
+      // Include the response-body read in the timeout.
+      const data: unknown = await response.json();
+
+      if (!response.ok) {
+        const code =
+          data &&
+          typeof data === "object" &&
+          "code" in data
+            ? String(data.code)
+            : "request_failed";
+
+        throw new WordPressError(
+          response.status,
+          code
+        );
+      }
+
+      return {
+        data: data as T,
+        headers: response.headers,
+      };
+    } catch (error) {
+      const retryable =
+        !(error instanceof WordPressError) ||
+        RETRYABLE_STATUSES.has(error.status);
+
+      if (
+        !retryable ||
+        attempt + 1 >= attempts
+      ) {
+        throw error;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, 600)
+    );
+  }
+
+  throw new Error("WordPress request failed.");
+}
 
 function stripHtml(html = ""): string {
-  let processed = html;
-
-  processed = processed.replace(
-    /<iframe[^>]*src=["']https?:\/\/(?:www\.)?youtube\.com\/embed\/([^"']+)["'][^>]*><\/iframe>/gi,
-    (_, videoId) => {
-      const cleanId = String(videoId).split("?")[0];
-      return `\nhttps://www.youtube.com/watch?v=${cleanId}\n`;
-    }
-  );
-
-  processed = processed.replace(
-    /(https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/live\/|youtube\.com\/shorts\/)[^\s<]+)/gi,
-    "\n$1\n"
-  );
-
-  processed = processed
+  return html
+    .replace(
+      /<iframe[^>]*src=["']https?:\/\/(?:www\.)?youtube\.com\/embed\/([^"']+)["'][^>]*><\/iframe>/gi,
+      (_, videoId: string) =>
+        `\nhttps://www.youtube.com/watch?v=${videoId.split("?")[0]}\n`
+    )
+    .replace(
+      /(https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/live\/|youtube\.com\/shorts\/)[^\s<]+)/gi,
+      "\n$1\n"
+    )
     .replace(/<!--more-->/gi, "\n\n")
     .replace(/<\/p>/gi, "\n\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
-    .replace(/&#8217;/g, "'")
-    .replace(/&#8220;/g, '"')
-    .replace(/&#8221;/g, '"')
+    .replace(/&#8217;|&#039;/g, "'")
+    .replace(/&#8220;|&#8221;/g, '"')
     .replace(/&#8211;/g, "–")
     .replace(/&#8212;/g, "—")
-    .replace(/&#038;/g, "&")
-    .replace(/&#039;/g, "'")
-    .replace(/&amp;/g, "&");
-
-  return processed.trim();
+    .replace(/&#038;|&amp;/g, "&")
+    .trim();
 }
 
-function isPostWithinHours(
-  post: Post,
-  hours: number
-): boolean {
-  const postTime = new Date(post.date).getTime();
-
-  if (Number.isNaN(postTime)) {
-    return false;
-  }
-
-  const cutoff =
-    Date.now() - hours * 60 * 60 * 1000;
-
-  return postTime >= cutoff;
-}
-
-function getCategoryName(
-  categories: number[]
-): string {
-  if (categories.includes(CATEGORY_IDS.breaking)) {
-    return "Breaking";
-  }
-
-  if (categories.includes(CATEGORY_IDS.sports)) {
-    return "Sports";
-  }
-
-  if (categories.includes(CATEGORY_IDS.liveVideo)) {
-    return "Live Video";
-  }
-
-  return "News";
-}
-
-function mapWordPressPost(
+function chooseImage(
   post: WordPressPost
-): Post {
+): string | undefined {
+  const media =
+    post._embedded?.["wp:featuredmedia"]?.[0];
+
+  const sizes = Object.values(
+    media?.media_details?.sizes ?? {}
+  )
+    .filter(
+      (size) =>
+        Boolean(size.source_url) &&
+        (size.width ?? 0) >= 800
+    )
+    .sort(
+      (a, b) =>
+        (a.width ?? 0) - (b.width ?? 0)
+    );
+
+  return sizes[0]?.source_url ?? media?.source_url;
+}
+
+function mapPost(post: WordPressPost): Post {
+  const categories = post.categories ?? [];
+
+  const category = categories.includes(
+    CATEGORY_IDS.breaking
+  )
+    ? "Breaking"
+    : categories.includes(CATEGORY_IDS.sports)
+      ? "Sports"
+      : categories.includes(CATEGORY_IDS.liveVideo)
+        ? "Live Video"
+        : "News";
+
   return {
     id: post.id,
-    title: stripHtml(post.title.rendered),
-    excerpt: stripHtml(post.excerpt.rendered),
-    body: stripHtml(post.content.rendered),
-    bodyHtml: post.content.rendered,
-    image:
-      post._embedded?.["wp:featuredmedia"]?.[0]
-        ?.source_url,
+    title: stripHtml(post.title?.rendered),
+    excerpt: stripHtml(post.excerpt?.rendered),
+    body: stripHtml(post.content?.rendered),
+    bodyHtml: post.content?.rendered ?? "",
+    image: chooseImage(post),
     imageCaption: stripHtml(
       post._embedded?.["wp:featuredmedia"]?.[0]
         ?.caption?.rendered
     ),
-    category: getCategoryName(post.categories),
+    category,
     date: post.date,
     modified: post.modified,
     author: post._embedded?.author?.[0]?.name,
@@ -199,781 +374,303 @@ function mapWordPressPost(
   };
 }
 
-function inspectCacheEntry<T>(
-  entry: CacheEntry<T> | undefined
-): CachedLookup<T> {
-  if (!entry) {
-    return null;
-  }
+function seedArticleCache(posts: Post[]): void {
+  for (const post of posts) {
+    const key = `post-${post.id}`;
 
-  const age = Date.now() - entry.timestamp;
+    const previous = memory.get(key) as
+      | CacheEntry<Post>
+      | undefined;
 
-  if (age > STALE_CACHE_MAX_AGE_MS) {
-    return null;
-  }
-
-  return {
-    data: entry.data,
-    isFresh: age < CACHE_TTL_MS,
-  };
-}
-
-function getMemoryCached<T>(
-  key: string
-): CachedLookup<T> {
-  const entry = cache.get(key) as
-    | CacheEntry<T>
-    | undefined;
-
-  const result = inspectCacheEntry(entry);
-
-  if (!result && entry) {
-    cache.delete(key);
-  }
-
-  return result;
-}
-
-function setCached<T>(
-  key: string,
-  data: T
-): void {
-  cache.set(key, {
-    data,
-    timestamp: Date.now(),
-  });
-}
-
-async function getPersistentCached<T>(
-  key: string
-): Promise<CachedLookup<T>> {
-  try {
-    const raw = await AsyncStorage.getItem(
-      `${STORAGE_CACHE_PREFIX}${key}`
-    );
-
-    if (!raw) {
-      return null;
+    if (
+      previous?.data.modified &&
+      post.modified &&
+      previous.data.modified > post.modified
+    ) {
+      continue;
     }
 
-    const parsed = JSON.parse(raw) as CacheEntry<T>;
-    const result = inspectCacheEntry(parsed);
-
-    if (!result) {
-      await AsyncStorage.removeItem(
-        `${STORAGE_CACHE_PREFIX}${key}`
-      );
-
-      return null;
-    }
-
-    return result;
-  } catch {
-    return null;
+    writeCache(key, post);
   }
 }
 
-async function setPersistentCached<T>(
-  key: string,
-  data: T
-): Promise<void> {
-  try {
-    await AsyncStorage.setItem(
-      `${STORAGE_CACHE_PREFIX}${key}`,
-      JSON.stringify({
-        data,
-        timestamp: Date.now(),
-      })
-    );
-  } catch {
-    // Cache failures must not block content.
-  }
-}
-
-function paginate(
-  posts: Post[],
-  page: number
-): PaginatedPosts {
-  const start = (page - 1) * PAGE_SIZE;
-  const end = start + PAGE_SIZE;
-
-  return {
-    posts: posts.slice(start, end),
-    hasMore: end < posts.length,
-    nextPage:
-      end < posts.length ? page + 1 : null,
-  };
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-async function fetchWithTimeout(
-  url: string
-): Promise<Response> {
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const controller = new AbortController();
-
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      REQUEST_TIMEOUT_MS
-    );
-
-    try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "Cache-Control": "no-cache",
-        },
-      });
-
-      if (
-        RETRYABLE_STATUSES.has(response.status) &&
-        attempt === 1
-      ) {
-        console.warn(
-          `[WordPress] Temporary HTTP ${response.status}; retrying ${url}`
-        );
-
-        await wait(600);
-        continue;
-      }
-
-      if (!response.ok) {
-        console.warn(
-          `[WordPress] HTTP ${response.status}: ${url}`
-        );
-      }
-
-      return response;
-    } catch (error) {
-      console.warn(
-        `[WordPress] Request ${attempt}/2 failed: ${url}`,
-        error
-      );
-
-      if (attempt === 2) {
-        throw error;
-      }
-
-      await wait(600);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  throw new Error("WordPress request failed");
-}
-
-function addCacheBuster(url: URL): void {
+function addPostFields(url: URL): void {
   url.searchParams.set(
-    "_ydl_refresh",
-    String(Date.now())
+    "_embed",
+    "author,wp:featuredmedia"
   );
+  url.searchParams.set("_fields", POST_FIELDS);
 }
 
-function parseTotalPages(
-  response: Response
-): number {
-  const totalPages = Number(
-    response.headers.get("X-WP-TotalPages")
-  );
-
-  if (
-    !Number.isFinite(totalPages) ||
-    totalPages < 1
-  ) {
-    return 1;
-  }
-
-  return Math.floor(totalPages);
-}
-
-async function runDeduplicated<T>(
-  key: string,
-  request: () => Promise<T>
-): Promise<T> {
-  const existing = inFlightRequests.get(
-    key
-  ) as Promise<T> | undefined;
-
-  if (existing) {
-    return existing;
-  }
-
-  const promise = request().finally(() => {
-    inFlightRequests.delete(key);
-  });
-
-  inFlightRequests.set(key, promise);
-
-  return promise;
-}
-
-async function getCategoryIdBySlug(
-  slug: string
-): Promise<number | null> {
-  const cacheKey = `category-slug-${slug}`;
-
-  const memoryCached =
-    getMemoryCached<number | null>(cacheKey);
-
-  if (memoryCached) {
-    return memoryCached.data;
-  }
-
-  const persistentCached =
-    await getPersistentCached<number | null>(
-      cacheKey
-    );
-
-  if (persistentCached) {
-    setCached(cacheKey, persistentCached.data);
-    return persistentCached.data;
-  }
-
-  return runDeduplicated(cacheKey, async () => {
-    const url = new URL(
-      `${WORDPRESS_BASE_URL}/categories`
-    );
-
-    url.searchParams.set("slug", slug);
-
-    const response = await fetchWithTimeout(
-      url.toString()
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to fetch WordPress category: ${slug}`
-      );
-    }
-
-    const categories =
-      (await response.json()) as WordPressCategory[];
-
-    const categoryId = categories[0]?.id ?? null;
-
-    setCached(cacheKey, categoryId);
-
-    await setPersistentCached(
-      cacheKey,
-      categoryId
-    );
-
-    return categoryId;
-  });
-}
-
-async function getTagIdBySlug(
-  slug: string,
-  forceRefresh = false
-): Promise<number | null> {
-  const cacheKey = `tag-slug-${slug}`;
-
-  if (!forceRefresh) {
-    const memoryCached =
-      getMemoryCached<number | null>(cacheKey);
-
-    if (memoryCached) {
-      return memoryCached.data;
-    }
-
-    const persistentCached =
-      await getPersistentCached<number | null>(
-        cacheKey
-      );
-
-    if (persistentCached) {
-      setCached(
-        cacheKey,
-        persistentCached.data
-      );
-
-      return persistentCached.data;
-    }
-  }
-
-  return runDeduplicated(
-    `${cacheKey}-${forceRefresh ? "refresh" : "normal"}`,
-    async () => {
-      const url = new URL(
-        `${WORDPRESS_BASE_URL}/tags`
-      );
-
-      url.searchParams.set("slug", slug);
-
-      if (forceRefresh) {
-        addCacheBuster(url);
-      }
-
-      const response = await fetchWithTimeout(
-        url.toString()
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch WordPress tag: ${slug}`
-        );
-      }
-
-      const tags =
-        (await response.json()) as WordPressTag[];
-
-      const tagId = tags[0]?.id ?? null;
-
-      setCached(cacheKey, tagId);
-
-      await setPersistentCached(
-        cacheKey,
-        tagId
-      );
-
-      return tagId;
-    }
-  );
-}
-
-function createPostsCacheKey({
-  categoryId,
-  tagId,
-  searchQuery,
-  perPage,
-}: FetchPostsOptions): string {
-  return JSON.stringify({
-    type: "posts",
-    categoryId,
-    tagId,
-    searchQuery,
-    perPage,
-  });
-}
-
-async function fetchAndCachePosts(
-  options: FetchPostsOptions,
-  cacheKey: string
-): Promise<Post[]> {
-  return runDeduplicated(cacheKey, async () => {
-    const {
-      categoryId,
-      tagId,
-      searchQuery,
-      perPage = 20,
-      forceRefresh = false,
-    } = options;
-
-    const url = new URL(
-      `${WORDPRESS_BASE_URL}/posts`
-    );
-
-    url.searchParams.set("_embed", "true");
-    url.searchParams.set(
-      "per_page",
-      String(perPage)
-    );
-
-    if (categoryId) {
-      url.searchParams.set(
-        "categories",
-        String(categoryId)
-      );
-    }
-
-    if (tagId) {
-      url.searchParams.set(
-        "tags",
-        String(tagId)
-      );
-    }
-
-    if (searchQuery?.trim()) {
-      url.searchParams.set(
-        "search",
-        searchQuery.trim()
-      );
-    }
-
-    if (forceRefresh) {
-      addCacheBuster(url);
-    }
-
-    const response = await fetchWithTimeout(
-      url.toString()
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        "Failed to fetch WordPress posts."
-      );
-    }
-
-    const posts =
-      (await response.json()) as WordPressPost[];
-
-    const mappedPosts = posts.map(
-      mapWordPressPost
-    );
-
-    setCached(cacheKey, mappedPosts);
-
-    await setPersistentCached(
-      cacheKey,
-      mappedPosts
-    );
-
-    return mappedPosts;
-  });
-}
-
-async function fetchWordPressPosts({
-  categoryId,
-  tagId,
-  searchQuery,
-  perPage = 20,
-  forceRefresh = false,
-}: FetchPostsOptions = {}): Promise<Post[]> {
-  if (
-    categoryId === null ||
-    tagId === null
-  ) {
-    return [];
-  }
-
-  const options: FetchPostsOptions = {
-    categoryId,
-    tagId,
-    searchQuery,
-    perPage,
-    forceRefresh,
+function emptyPage(): PaginatedPosts {
+  return {
+    posts: [],
+    hasMore: false,
+    nextPage: null,
   };
-
-  const cacheKey =
-    createPostsCacheKey(options);
-
-  if (!forceRefresh) {
-    const memoryCached =
-      getMemoryCached<Post[]>(cacheKey);
-
-    if (memoryCached) {
-      if (!memoryCached.isFresh) {
-        void fetchAndCachePosts(
-          {
-            ...options,
-            forceRefresh: true,
-          },
-          cacheKey
-        ).catch(() => {});
-      }
-
-      return memoryCached.data;
-    }
-
-    const persistentCached =
-      await getPersistentCached<Post[]>(
-        cacheKey
-      );
-
-    if (persistentCached) {
-      setCached(
-        cacheKey,
-        persistentCached.data
-      );
-
-      if (!persistentCached.isFresh) {
-        void fetchAndCachePosts(
-          {
-            ...options,
-            forceRefresh: true,
-          },
-          cacheKey
-        ).catch(() => {});
-      }
-
-      return persistentCached.data;
-    }
-  }
-
-  try {
-    return await fetchAndCachePosts(
-      options,
-      cacheKey
-    );
-  } catch (error) {
-    const memoryCached =
-      getMemoryCached<Post[]>(cacheKey);
-
-    if (memoryCached) {
-      return memoryCached.data;
-    }
-
-    const persistentCached =
-      await getPersistentCached<Post[]>(
-        cacheKey
-      );
-
-    if (persistentCached) {
-      setCached(
-        cacheKey,
-        persistentCached.data
-      );
-
-      return persistentCached.data;
-    }
-
-    throw error;
-  }
 }
 
-async function fetchSearchPage(
-  query: string,
-  page: number
+async function fetchPage(
+  query: Query,
+  page: number,
+  size: number,
+  options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  const normalizedQuery = query.trim();
-
-  if (!normalizedQuery) {
-    return {
-      posts: [],
-      hasMore: false,
-      nextPage: null,
-    };
+  if (
+    query.categoryId === null ||
+    query.tagId === null
+  ) {
+    return emptyPage();
   }
 
-  const safePage = Math.max(1, page);
+  const safePage = Number.isFinite(page)
+    ? Math.max(1, Math.floor(page))
+    : 1;
 
-  const cacheKey = JSON.stringify({
-    type: "search-page",
-    query: normalizedQuery.toLowerCase(),
+  const key = `page-v3:${JSON.stringify({
+    ...query,
     page: safePage,
-    perPage: SEARCH_PAGE_SIZE,
-  });
+    size,
+  })}`;
 
-  const memoryCached =
-    getMemoryCached<PaginatedPosts>(
-      cacheKey
-    );
+  const forceRefresh = Boolean(options.forceRefresh);
 
-  if (memoryCached?.isFresh) {
-    return memoryCached.data;
-  }
+  return cachedRequest(
+    key,
+    forceRefresh,
+    async (attempts) => {
+      const url = new URL(
+        `${WORDPRESS_BASE_URL}/posts`
+      );
 
-  const persistentCached =
-    await getPersistentCached<PaginatedPosts>(
-      cacheKey
-    );
+      addPostFields(url);
 
-  if (persistentCached?.isFresh) {
-    setCached(
-      cacheKey,
-      persistentCached.data
-    );
+      url.searchParams.set(
+        "page",
+        String(safePage)
+      );
+      url.searchParams.set(
+        "per_page",
+        String(size)
+      );
 
-    return persistentCached.data;
-  }
+      if (query.categoryId) {
+        url.searchParams.set(
+          "categories",
+          String(query.categoryId)
+        );
+      }
 
-  const url = new URL(
-    `${WORDPRESS_BASE_URL}/posts`
-  );
+      if (query.tagId) {
+        url.searchParams.set(
+          "tags",
+          String(query.tagId)
+        );
+      }
 
-  url.searchParams.set("_embed", "true");
-  url.searchParams.set(
-    "search",
-    normalizedQuery
-  );
-  url.searchParams.set(
-    "page",
-    String(safePage)
-  );
-  url.searchParams.set(
-    "per_page",
-    String(SEARCH_PAGE_SIZE)
-  );
-  url.searchParams.set(
-    "orderby",
-    "relevance"
-  );
+      if (query.search) {
+        url.searchParams.set(
+          "search",
+          query.search
+        );
+        url.searchParams.set(
+          "orderby",
+          "relevance"
+        );
+      }
 
-  addCacheBuster(url);
+      if (query.breaking) {
+        url.searchParams.set(
+          "after",
+          new Date(
+            Date.now() - 48 * 60 * 60 * 1000
+          ).toISOString()
+        );
+      }
 
-  try {
-    return await runDeduplicated(
-      cacheKey,
-      async () => {
-        const response =
-          await fetchWithTimeout(
-            url.toString()
+      try {
+        const { data, headers } =
+          await requestJson<WordPressPost[]>(
+            url,
+            attempts,
+            forceRefresh
           );
 
-        if (!response.ok) {
-          if (
-            response.status === 400 &&
-            safePage > 1
-          ) {
-            return {
-              posts: [],
-              hasMore: false,
-              nextPage: null,
-            };
-          }
-
+        if (!Array.isArray(data)) {
           throw new Error(
-            "Unable to search WordPress stories."
+            "Invalid WordPress story list."
           );
         }
 
-        const posts =
-          (await response.json()) as WordPressPost[];
+        const posts = data.map(mapPost);
+
+        const header = headers.get(
+          "X-WP-TotalPages"
+        );
 
         const totalPages =
-          parseTotalPages(response);
+          header === null
+            ? NaN
+            : Number(header);
 
-        const hasMore =
-          safePage < totalPages;
+        const hasMore = Number.isFinite(totalPages)
+          ? safePage < totalPages
+          : posts.length === size;
 
-        const result: PaginatedPosts = {
-          posts: posts.map(
-            mapWordPressPost
-          ),
+        seedArticleCache(posts);
+
+        return {
+          posts,
           hasMore,
           nextPage: hasMore
             ? safePage + 1
             : null,
         };
+      } catch (error) {
+        if (
+          error instanceof WordPressError &&
+          error.code ===
+            "rest_post_invalid_page_number" &&
+          safePage > 1
+        ) {
+          return emptyPage();
+        }
 
-        setCached(cacheKey, result);
-
-        await setPersistentCached(
-          cacheKey,
-          result
-        );
-
-        return result;
+        throw error;
       }
-    );
-  } catch (error) {
-    if (memoryCached) {
-      return memoryCached.data;
     }
-
-    if (persistentCached) {
-      setCached(
-        cacheKey,
-        persistentCached.data
-      );
-
-      return persistentCached.data;
-    }
-
-    throw error;
-  }
+  );
 }
 
-async function getTopStoryPosts(
-  options: ContentRequestOptions = {}
-): Promise<Post[]> {
-  const appTopStoryTagId =
-    await getTagIdBySlug(
-      TAG_SLUGS.appTopStory,
-      Boolean(options.forceRefresh)
-    );
+async function lookupId(
+  kind: "categories" | "tags",
+  slug: string
+): Promise<number | null> {
+  return cachedRequest(
+    `lookup-v3:${kind}:${slug}`,
+    false,
+    async (attempts) => {
+      const url = new URL(
+        `${WORDPRESS_BASE_URL}/${kind}`
+      );
 
-  if (!appTopStoryTagId) {
-    return [];
-  }
+      url.searchParams.set("slug", slug);
+      url.searchParams.set("_fields", "id");
 
-  const taggedPosts =
-    await fetchWordPressPosts({
-      tagId: appTopStoryTagId,
-      perPage: 1,
-      forceRefresh:
-        options.forceRefresh,
-    });
+      const { data } =
+        await requestJson<Array<{ id: number }>>(
+          url,
+          attempts
+        );
 
-  return taggedPosts.slice(0, 1);
+      if (!Array.isArray(data)) {
+        throw new Error(
+          "Invalid WordPress taxonomy response."
+        );
+      }
+
+      return data[0]?.id ?? null;
+    }
+  );
 }
 
 export async function getTopStories(
   page = 1
 ): Promise<PaginatedPosts> {
-  const posts = await fetchWordPressPosts({
-    perPage: 25,
-  });
-
-  return paginate(posts, page);
+  return fetchPage({}, page, PAGE_SIZE);
 }
 
 export async function getNewsPosts(
   page = 1,
   options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  const posts = await fetchWordPressPosts({
-    categoryId: CATEGORY_IDS.news,
-    perPage: 25,
-    forceRefresh:
-      options.forceRefresh,
-  });
-
-  return paginate(posts, page);
+  return fetchPage(
+    { categoryId: CATEGORY_IDS.news },
+    page,
+    PAGE_SIZE,
+    options
+  );
 }
 
 export async function getSportsPosts(
   page = 1,
   options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  const posts = await fetchWordPressPosts({
-    categoryId: CATEGORY_IDS.sports,
-    perPage: 25,
-    forceRefresh:
-      options.forceRefresh,
-  });
-
-  return paginate(posts, page);
+  return fetchPage(
+    { categoryId: CATEGORY_IDS.sports },
+    page,
+    PAGE_SIZE,
+    options
+  );
 }
 
 export async function getBreakingPosts(
   page = 1,
   options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  const posts = await fetchWordPressPosts({
-    categoryId: CATEGORY_IDS.breaking,
-    perPage: 25,
-    forceRefresh:
-      options.forceRefresh,
+  const result = await fetchPage(
+    {
+      categoryId: CATEGORY_IDS.breaking,
+      breaking: true,
+    },
+    page,
+    PAGE_SIZE,
+    options
+  );
+
+  // Enforce expiry even with an offline cached response.
+  const cutoff =
+    Date.now() - 48 * 60 * 60 * 1000;
+
+  const posts = result.posts.filter((post) => {
+    const date = new Date(post.date).getTime();
+
+    return (
+      Number.isFinite(date) &&
+      date >= cutoff
+    );
   });
 
-  const activeBreakingPosts =
-    posts.filter((post) =>
-      isPostWithinHours(
-        post,
-        BREAKING_WINDOW_HOURS
-      )
-    );
+  const hasMore =
+    result.hasMore &&
+    posts.length === result.posts.length;
 
-  return paginate(
-    activeBreakingPosts,
-    page
-  );
+  return {
+    posts,
+    hasMore,
+    nextPage: hasMore
+      ? result.nextPage
+      : null,
+  };
 }
 
 export async function getForestCountyNewsPosts(
   page = 1,
   options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  const categoryId =
-    await getCategoryIdBySlug(
-      CATEGORY_SLUGS.forestCountyNews
-    );
+  const categoryId = await lookupId(
+    "categories",
+    "forestcountynews"
+  );
 
-  const posts = await fetchWordPressPosts({
-    categoryId,
-    perPage: 25,
-    forceRefresh:
-      options.forceRefresh,
-  });
+  return fetchPage(
+    { categoryId },
+    page,
+    PAGE_SIZE,
+    options
+  );
+}
 
-  return paginate(posts, page);
+export async function getLiveVideoPosts(
+  page = 1,
+  options: ContentRequestOptions = {}
+): Promise<PaginatedPosts> {
+  return fetchPage(
+    { categoryId: CATEGORY_IDS.liveVideo },
+    page,
+    PAGE_SIZE,
+    options
+  );
 }
 
 export async function getPostsByCategory(
@@ -981,37 +678,34 @@ export async function getPostsByCategory(
   page = 1,
   options: ContentRequestOptions = {}
 ): Promise<PaginatedPosts> {
-  const normalizedCategory =
+  const normalized =
     category.trim().toLowerCase();
 
-  if (normalizedCategory === "sports") {
-    return getSportsPosts(
-      page,
-      options
-    );
-  }
-
-  if (normalizedCategory === "breaking") {
-    return getBreakingPosts(
-      page,
-      options
-    );
-  }
-
-  if (normalizedCategory === "live video") {
-    return getLiveVideoPosts(
-      page,
-      options
-    );
+  if (normalized === "sports") {
+    return getSportsPosts(page, options);
   }
 
   if (
-    normalizedCategory ===
-      "forest-county-news" ||
-    normalizedCategory ===
-      "forest county news" ||
-    normalizedCategory ===
-      "forestcountynews"
+    normalized === "breaking" ||
+    normalized === "breaking-news"
+  ) {
+    return getBreakingPosts(page, options);
+  }
+
+  if (
+    ["live video", "live-video", "watch"].includes(
+      normalized
+    )
+  ) {
+    return getLiveVideoPosts(page, options);
+  }
+
+  if (
+    [
+      "forest-county-news",
+      "forest county news",
+      "forestcountynews",
+    ].includes(normalized)
   ) {
     return getForestCountyNewsPosts(
       page,
@@ -1019,88 +713,50 @@ export async function getPostsByCategory(
     );
   }
 
-  return getNewsPosts(
-    page,
-    options
-  );
+  return getNewsPosts(page, options);
 }
 
 export async function getHomepageSections(
   options: ContentRequestOptions = {}
 ): Promise<HomeSection[]> {
-  const forestCountyCategoryPromise =
-    getCategoryIdBySlug(
-      CATEGORY_SLUGS.forestCountyNews
-    );
-
-  const topStoryPromise =
-    getTopStoryPosts(options);
-
-  const newsPromise =
-    fetchWordPressPosts({
-      categoryId: CATEGORY_IDS.news,
-      perPage: 6,
-      forceRefresh:
-        options.forceRefresh,
-    });
-
-  const sportsPromise =
-    fetchWordPressPosts({
-      categoryId: CATEGORY_IDS.sports,
-      perPage: 6,
-      forceRefresh:
-        options.forceRefresh,
-    });
-
-  const forestCountyPromise =
-    forestCountyCategoryPromise.then(
-      (forestCountyCategoryId) =>
-        fetchWordPressPosts({
-          categoryId:
-            forestCountyCategoryId,
-          perPage: 6,
-          forceRefresh:
-            options.forceRefresh,
-        })
-    );
+  const topStory = lookupId(
+    "tags",
+    "app"
+  ).then((tagId) =>
+    fetchPage({ tagId }, 1, 1, options)
+  );
 
   const results = await Promise.allSettled([
-    topStoryPromise,
-    newsPromise,
-    sportsPromise,
-    forestCountyPromise,
+    topStory,
+    getNewsPosts(1, options),
+    getSportsPosts(1, options),
+    getForestCountyNewsPosts(1, options),
   ]);
 
-  const [
-    topStoryPosts,
-    newsPosts,
-    sportsPosts,
-    forestCountyPosts,
-  ] = results.map((result) =>
+  if (
+    results.every(
+      (result) => result.status === "rejected"
+    )
+  ) {
+    throw new Error(
+      "All Home content sections failed."
+    );
+  }
+
+  const posts = results.map((result) =>
     result.status === "fulfilled"
-      ? result.value
+      ? result.value.posts
       : []
   );
 
   results.forEach((result, index) => {
     if (result.status === "rejected") {
       console.warn(
-        `[WordPress] Home section ${index} failed`,
+        `[WordPress] Home section ${index} failed:`,
         result.reason
       );
     }
   });
-
-  if (
-    results.every(
-      (result) =>
-        result.status === "rejected"
-    )
-  ) {
-    throw new Error(
-      "All Home content sections failed"
-    );
-  }
 
   return [
     {
@@ -1109,7 +765,7 @@ export async function getHomepageSections(
       slug: "top-story",
       type: "lead",
       category: "featured",
-      posts: topStoryPosts.slice(0, 1),
+      posts: posts[0].slice(0, 1),
     },
     {
       id: "latest-news",
@@ -1117,7 +773,7 @@ export async function getHomepageSections(
       slug: "latest-news",
       type: "list",
       category: "News",
-      posts: newsPosts.slice(0, 4),
+      posts: posts[1].slice(0, 4),
     },
     {
       id: "ad-1",
@@ -1132,7 +788,7 @@ export async function getHomepageSections(
       slug: "sports",
       type: "list",
       category: "Sports",
-      posts: sportsPosts.slice(0, 4),
+      posts: posts[2].slice(0, 4),
     },
     {
       id: "forest-county-news",
@@ -1140,139 +796,67 @@ export async function getHomepageSections(
       slug: "forest-county-news",
       type: "list",
       category: "Forest County News",
-      posts: forestCountyPosts.slice(0, 3),
+      posts: posts[3].slice(0, 3),
     },
   ];
-}
-
-async function fetchAndCachePostById(
-  id: string,
-  cacheKey: string,
-  forceRefresh: boolean
-): Promise<Post | undefined> {
-  return runDeduplicated(
-    cacheKey,
-    async () => {
-      const url = new URL(
-        `${WORDPRESS_BASE_URL}/posts/${id}`
-      );
-
-      url.searchParams.set(
-        "_embed",
-        "true"
-      );
-
-      if (forceRefresh) {
-        addCacheBuster(url);
-      }
-
-      const response =
-        await fetchWithTimeout(
-          url.toString()
-        );
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to fetch WordPress story."
-        );
-      }
-
-      const post =
-        (await response.json()) as WordPressPost;
-
-      const mappedPost =
-        mapWordPressPost(post);
-
-      setCached(
-        cacheKey,
-        mappedPost
-      );
-
-      await setPersistentCached(
-        cacheKey,
-        mappedPost
-      );
-
-      return mappedPost;
-    }
-  );
 }
 
 export async function getPostById(
   id: string,
   options: ContentRequestOptions = {}
 ): Promise<Post | undefined> {
-  const cacheKey = `post-${id}`;
-
-  if (!options.forceRefresh) {
-    const memoryCached =
-      getMemoryCached<Post | undefined>(
-        cacheKey
-      );
-
-    if (memoryCached) {
-      if (!memoryCached.isFresh) {
-        void fetchAndCachePostById(
-          id,
-          cacheKey,
-          true
-        ).catch(() => {});
-      }
-
-      return memoryCached.data;
-    }
-
-    const persistentCached =
-      await getPersistentCached<
-        Post | undefined
-      >(cacheKey);
-
-    if (persistentCached) {
-      setCached(
-        cacheKey,
-        persistentCached.data
-      );
-
-      if (!persistentCached.isFresh) {
-        void fetchAndCachePostById(
-          id,
-          cacheKey,
-          true
-        ).catch(() => {});
-      }
-
-      return persistentCached.data;
-    }
+  if (
+    !/^\d+$/.test(id) ||
+    Number(id) < 1
+  ) {
+    return undefined;
   }
 
+  const key = `post-${Number(id)}`;
+
   try {
-    return await fetchAndCachePostById(
-      id,
-      cacheKey,
-      Boolean(options.forceRefresh)
+    return await cachedRequest(
+      key,
+      Boolean(options.forceRefresh),
+      async (attempts) => {
+        const url = new URL(
+          `${WORDPRESS_BASE_URL}/posts/${Number(id)}`
+        );
+
+        addPostFields(url);
+
+        const { data } =
+          await requestJson<WordPressPost>(
+            url,
+            attempts,
+            Boolean(options.forceRefresh)
+          );
+
+        if (
+          !data ||
+          data.id !== Number(id) ||
+          !data.content
+        ) {
+          throw new Error(
+            "Invalid WordPress story."
+          );
+        }
+
+        return mapPost(data);
+      }
     );
   } catch (error) {
-    const memoryCached =
-      getMemoryCached<Post | undefined>(
-        cacheKey
-      );
+    if (
+      error instanceof WordPressError &&
+      error.status === 404
+    ) {
+      memory.delete(key);
 
-    if (memoryCached) {
-      return memoryCached.data;
-    }
+      void AsyncStorage.removeItem(
+        `${STORAGE_CACHE_PREFIX}${key}`
+      ).catch(() => undefined);
 
-    const persistentCached =
-      await getPersistentCached<
-        Post | undefined
-      >(cacheKey);
-
-    if (persistentCached) {
-      setCached(
-        cacheKey,
-        persistentCached.data
-      );
-
-      return persistentCached.data;
+      return undefined;
     }
 
     throw error;
@@ -1283,23 +867,13 @@ export async function searchPosts(
   query: string,
   page = 1
 ): Promise<PaginatedPosts> {
-  return fetchSearchPage(
-    query,
-    page
-  );
-}
+  const search = query.trim();
 
-export async function getLiveVideoPosts(
-  page = 1,
-  options: ContentRequestOptions = {}
-): Promise<PaginatedPosts> {
-  const posts = await fetchWordPressPosts({
-    categoryId:
-      CATEGORY_IDS.liveVideo,
-    perPage: 25,
-    forceRefresh:
-      options.forceRefresh,
-  });
-
-  return paginate(posts, page);
+  return search
+    ? fetchPage(
+        { search },
+        page,
+        SEARCH_PAGE_SIZE
+      )
+    : emptyPage();
 }
