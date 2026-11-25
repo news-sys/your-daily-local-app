@@ -1,4 +1,3 @@
-
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
@@ -31,7 +30,10 @@ import type {
   LegacyAdPlacement,
 } from "@/data/adSlots";
 import { getFeedPlacementRules } from "@/services/ads";
-import { trackEvent, trackScreenView } from "@/services/analytics";
+import {
+  trackEvent,
+  trackScreenView,
+} from "@/services/analytics";
 import {
   getSavedPosts,
   toggleSavedPost,
@@ -62,7 +64,10 @@ type PostFeedProps = {
 };
 
 type FeedItem =
-  | { type: "post"; post: Post }
+  | {
+      type: "post";
+      post: Post;
+    }
   | {
       type: "ad";
       id: string;
@@ -233,7 +238,10 @@ function mergeBackgroundFirstPage(
   refreshedPosts: Post[]
 ): Post[] {
   // An empty refresh must not wipe a working feed.
-  if (refreshedPosts.length === 0 && currentPosts.length > 0) {
+  if (
+    refreshedPosts.length === 0 &&
+    currentPosts.length > 0
+  ) {
     return currentPosts;
   }
 
@@ -433,9 +441,9 @@ export default function PostFeed({
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [savingPostId, setSavingPostId] = useState<number | null>(
-    null
-  );
+  const [savingPostId, setSavingPostId] = useState<
+    number | null
+  >(null);
   const [removingPostId, setRemovingPostId] = useState<
     number | null
   >(null);
@@ -451,6 +459,15 @@ export default function PostFeed({
     () => getFeedSurface(analyticsScreenName, title),
     [analyticsScreenName, title]
   );
+
+  // Parent screens may pass an inline fetch function.
+  // Keep the latest implementation without restarting
+  // initial loading on every parent render.
+  const fetchPostsRef = useRef(fetchPosts);
+
+  useEffect(() => {
+    fetchPostsRef.current = fetchPosts;
+  }, [fetchPosts]);
 
   const postsRef = useRef<Post[]>([]);
   const isLoadingRef = useRef(false);
@@ -499,10 +516,12 @@ export default function PostFeed({
   const refreshSavedPostIds = useCallback(async () => {
     try {
       const savedPosts = await getSavedPosts();
-      setSavedPostIds(savedPosts.map((post) => post.id));
+
+      setSavedPostIds(
+        savedPosts.map((post) => post.id)
+      );
     } catch {
-      // A temporary storage failure should not erase
-      // the bookmark indicators already on screen.
+      // Keep the bookmark indicators already on screen.
     }
   }, []);
 
@@ -530,6 +549,7 @@ export default function PostFeed({
           "[PostFeed] Unable to refresh ad placement rules:",
           error
         );
+
         // Keep existing rules or legacy placements.
       } finally {
         isLoadingAdRulesRef.current = false;
@@ -543,6 +563,7 @@ export default function PostFeed({
       if (isLoadingRef.current) return;
 
       isLoadingRef.current = true;
+
       const forceRefresh = mode !== "initial";
 
       try {
@@ -556,17 +577,23 @@ export default function PostFeed({
           setErrorMessage(null);
         }
 
-        if (mode === "manual" && analyticsScreenName) {
+        if (
+          mode === "manual" &&
+          analyticsScreenName
+        ) {
           trackEvent("screen_view", {
             screenName: analyticsScreenName,
             action: "refresh",
           });
         }
 
-        const [result] = await Promise.all([
-          fetchPosts(1, { forceRefresh }),
-          loadAdRules(forceRefresh),
-        ]);
+        // Ad rules must not hold up the story list.
+        void loadAdRules(forceRefresh);
+
+        const result = await fetchPostsRef.current(
+          1,
+          { forceRefresh }
+        );
 
         const receivedPosts = result.posts;
 
@@ -577,12 +604,15 @@ export default function PostFeed({
           );
 
           if (
-            !postListsAreEqual(postsRef.current, mergedPosts)
+            !postListsAreEqual(
+              postsRef.current,
+              mergedPosts
+            )
           ) {
             updatePosts(mergedPosts);
           }
         } else {
-          // Preserve existing content if a refresh
+          // Preserve working content when a refresh
           // unexpectedly returns an empty page.
           const keepExisting =
             receivedPosts.length === 0 &&
@@ -604,7 +634,6 @@ export default function PostFeed({
           }
         }
 
-        // Successful recovery must remove stale errors.
         setErrorMessage(null);
         lastRefreshRef.current = Date.now();
         hasCompletedInitialLoadRef.current = true;
@@ -616,14 +645,13 @@ export default function PostFeed({
           error
         );
 
-        if (mode !== "background") {
-          // Only show the feed error if there are
-          // no previously loaded stories to display.
-          if (postsRef.current.length === 0) {
-            setErrorMessage(
-              "Unable to load stories. Check your connection and pull down to try again."
-            );
-          }
+        if (
+          mode !== "background" &&
+          postsRef.current.length === 0
+        ) {
+          setErrorMessage(
+            "Unable to load stories. Check your connection and pull down to try again."
+          );
         }
       } finally {
         isLoadingRef.current = false;
@@ -639,7 +667,6 @@ export default function PostFeed({
     },
     [
       analyticsScreenName,
-      fetchPosts,
       isSavedStoriesFeed,
       loadAdRules,
       refreshSavedPostIds,
@@ -671,7 +698,9 @@ export default function PostFeed({
         });
       }
 
-      const result = await fetchPosts(nextPage);
+      const result = await fetchPostsRef.current(
+        nextPage
+      );
 
       const existingIds = new Set(
         postsRef.current.map((post) => post.id)
@@ -682,7 +711,10 @@ export default function PostFeed({
       );
 
       if (newPosts.length > 0) {
-        updatePosts([...postsRef.current, ...newPosts]);
+        updatePosts([
+          ...postsRef.current,
+          ...newPosts,
+        ]);
       }
 
       setHasMore(result.hasMore);
@@ -692,6 +724,7 @@ export default function PostFeed({
         "[PostFeed] Unable to load additional stories:",
         error
       );
+
       // Retain existing posts and pagination state.
     } finally {
       isLoadingMoreRef.current = false;
@@ -699,7 +732,6 @@ export default function PostFeed({
     }
   }, [
     analyticsScreenName,
-    fetchPosts,
     hasMore,
     isLoading,
     isRefreshing,
@@ -714,11 +746,14 @@ export default function PostFeed({
       try {
         setSavingPostId(post.id);
 
-        const isNowSaved = await toggleSavedPost(post);
+        const isNowSaved = await toggleSavedPost(
+          post
+        );
 
         if (isNowSaved) {
           trackEvent("saved_story", {
-            source: analyticsScreenName ?? "feed",
+            source:
+              analyticsScreenName ?? "feed",
             postId: post.id,
             title: post.title,
           });
@@ -731,7 +766,9 @@ export default function PostFeed({
               : [...currentIds, post.id];
           }
 
-          return currentIds.filter((id) => id !== post.id);
+          return currentIds.filter(
+            (id) => id !== post.id
+          );
         });
 
         setErrorMessage(null);
@@ -748,18 +785,28 @@ export default function PostFeed({
 
   const handleRemovePost = useCallback(
     async (post: Post) => {
-      if (!onRemovePost || removingPostId !== null) return;
+      if (
+        !onRemovePost ||
+        removingPostId !== null
+      ) {
+        return;
+      }
 
       try {
         setRemovingPostId(post.id);
+
         await onRemovePost(post);
 
         updatePosts(
-          postsRef.current.filter((item) => item.id !== post.id)
+          postsRef.current.filter(
+            (item) => item.id !== post.id
+          )
         );
 
         setSavedPostIds((currentIds) =>
-          currentIds.filter((id) => id !== post.id)
+          currentIds.filter(
+            (id) => id !== post.id
+          )
         );
 
         setErrorMessage(null);
@@ -771,31 +818,33 @@ export default function PostFeed({
         setRemovingPostId(null);
       }
     },
-    [onRemovePost, removingPostId, updatePosts]
+    [
+      onRemovePost,
+      removingPostId,
+      updatePosts,
+    ]
   );
 
   useEffect(() => {
-    async function startFeed(): Promise<void> {
-      await loadFirstPage("initial");
-
-      if (!isSavedStoriesFeed) {
-        void loadFirstPage("background");
-      }
-    }
-
-    void startFeed();
-  }, [isSavedStoriesFeed, loadFirstPage]);
+    // Focus and pull-to-refresh handle later refreshes.
+    // Do not repeat a successful initial request.
+    void loadFirstPage("initial");
+  }, [loadFirstPage]);
 
   useFocusEffect(
     useCallback(() => {
       void refreshSavedPostIds();
 
-      if (!hasReceivedInitialFocusRef.current) {
+      if (
+        !hasReceivedInitialFocusRef.current
+      ) {
         hasReceivedInitialFocusRef.current = true;
         return;
       }
 
-      if (!hasCompletedInitialLoadRef.current) {
+      if (
+        !hasCompletedInitialLoadRef.current
+      ) {
         return;
       }
 
@@ -809,7 +858,10 @@ export default function PostFeed({
       const timeSinceRefresh =
         Date.now() - lastRefreshRef.current;
 
-      if (timeSinceRefresh >= focusRefreshInterval) {
+      if (
+        timeSinceRefresh >=
+        focusRefreshInterval
+      ) {
         void loadFirstPage("background");
       }
     }, [
@@ -822,25 +874,40 @@ export default function PostFeed({
   );
 
   const feedItems = useMemo(
-    () => buildFeedItems(posts, showAds, adRules),
+    () =>
+      buildFeedItems(
+        posts,
+        showAds,
+        adRules
+      ),
     [adRules, posts, showAds]
   );
 
-  const keyExtractor = useCallback((item: FeedItem) => {
-    return item.type === "post"
-      ? String(item.post.id)
-      : item.id;
-  }, []);
+  const keyExtractor = useCallback(
+    (item: FeedItem) =>
+      item.type === "post"
+        ? String(item.post.id)
+        : item.id,
+    []
+  );
 
   const renderItem = useCallback(
     ({ item }: { item: FeedItem }) => {
       if (item.type === "ad") {
         return (
           <FeedAdSlot
-            legacyPlacement={item.legacyPlacement}
-            rotationSlug={item.rotationSlug}
-            trackingPlacement={item.trackingPlacement}
-            rotationIntervalMs={item.rotationIntervalMs}
+            legacyPlacement={
+              item.legacyPlacement
+            }
+            rotationSlug={
+              item.rotationSlug
+            }
+            trackingPlacement={
+              item.trackingPlacement
+            }
+            rotationIntervalMs={
+              item.rotationIntervalMs
+            }
           />
         );
       }
@@ -850,15 +917,27 @@ export default function PostFeed({
       return (
         <FeedPostCard
           post={post}
-          isSaved={savedPostIds.includes(post.id)}
-          isSaving={savingPostId === post.id}
-          isRemoving={removingPostId === post.id}
+          isSaved={
+            savedPostIds.includes(post.id)
+          }
+          isSaving={
+            savingPostId === post.id
+          }
+          isRemoving={
+            removingPostId === post.id
+          }
           showBookmarkButton={!onRemovePost}
           removePostLabel={removePostLabel}
-          analyticsScreenName={analyticsScreenName}
-          onToggleSavedPost={handleToggleSavedPost}
+          analyticsScreenName={
+            analyticsScreenName
+          }
+          onToggleSavedPost={
+            handleToggleSavedPost
+          }
           onRemovePost={
-            onRemovePost ? handleRemovePost : undefined
+            onRemovePost
+              ? handleRemovePost
+              : undefined
           }
         />
       );
@@ -878,7 +957,9 @@ export default function PostFeed({
   const renderHeader = useCallback(
     () => (
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{title}</Text>
+        <Text style={styles.headerTitle}>
+          {title}
+        </Text>
 
         {errorMessage ? (
           <View style={styles.errorBox}>
@@ -919,7 +1000,10 @@ export default function PostFeed({
     );
   }, [emptyMessage, isLoading]);
 
-  if (isLoading && posts.length === 0) {
+  if (
+    isLoading &&
+    posts.length === 0
+  ) {
     return (
       <SafeAreaView
         style={styles.safeArea}
@@ -951,7 +1035,9 @@ export default function PostFeed({
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={() => void loadFirstPage("manual")}
+            onRefresh={() =>
+              void loadFirstPage("manual")
+            }
           />
         }
         onScroll={handleScroll}
