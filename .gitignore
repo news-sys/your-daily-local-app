@@ -51,3 +51,8 @@ assets/images/original-assets/
 firebase-adminsdk.json
 *-firebase-adminsdk-*.json
 .env.local
+
+/dist-build-check/
+/dist-performance-check/
+/dist-performance-check-ios/
+/eas-build-inspection/
